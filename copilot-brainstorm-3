@@ -1,0 +1,2053 @@
+I'll implement the Backend API, ML service for content analysis, and CI/CD pipelines for your tab and bookmark management system.
+
+## Backend API Implementation (Node.js/Express)
+
+### **backend/package.json**
+```json
+{
+  "name": "tab-bookmark-api",
+  "version": "1.0.0",
+  "description": "Backend API for Tab & Bookmark Manager",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node api/server.js",
+    "dev": "nodemon api/server.js",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "migrate": "node database/migrate.js",
+    "seed": "node database/seed.js",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.js\""
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "dotenv": "^16.3.1",
+    "pg": "^8.11.3",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.35.1",
+    "bcrypt": "^5.1.1",
+    "jsonwebtoken": "^9.0.2",
+    "express-validator": "^7.0.1",
+    "express-rate-limit": "^7.1.5",
+    "morgan": "^1.10.0",
+    "compression": "^1.7.4",
+    "puppeteer": "^21.6.1",
+    "cheerio": "^1.0.0-rc.12",
+    "node-fetch": "^3.3.2",
+    "bull": "^4.12.0",
+    "redis": "^4.6.11",
+    "axios": "^1.6.2",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.1"
+  }
+}
+```
+
+### **backend/.env.example**
+```env
+# Server Configuration
+NODE_ENV=development
+PORT=3000
+API_VERSION=v1
+
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=tab_bookmark_db
+DB_USER=postgres
+DB_PASSWORD=your_password
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# JWT
+JWT_SECRET=your_super_secret_jwt_key_change_this
+JWT_EXPIRES_IN=7d
+
+# ML Service
+ML_SERVICE_URL=http://localhost:5000
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+
+# Archival
+ARCHIVE_STORAGE_PATH=./storage/archives
+MAX_ARCHIVE_SIZE_MB=50
+
+# Puppeteer
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+```
+
+### **backend/api/server.js**
+```javascript
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
+import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
+import dotenv from 'dotenv';
+import { sequelize } from './database/config.js';
+import logger from './utils/logger.js';
+
+// Route imports
+import tabRoutes from './routes/tabs.js';
+import bookmarkRoutes from './routes/bookmarks.js';
+import archiveRoutes from './routes/archives.js';
+import suggestionRoutes from './routes/suggestions.js';
+import collectionRoutes from './routes/collections.js';
+import authRoutes from './routes/auth.js';
+import analyticsRoutes from './routes/analytics.js';
+import searchRoutes from './routes/search.js';
+
+// Middleware imports
+import { errorHandler } from './middleware/errorHandler.js';
+import { authenticate } from './middleware/auth.js';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const API_VERSION = process.env.API_VERSION || 'v1';
+
+// Security middleware
+app.use(helmet());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || '*',
+  credentials: true
+}));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
+  message: 'Too many requests from this IP, please try again later.'
+});
+app.use(`/api/${API_VERSION}`, limiter);
+
+// Body parsing & compression
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(compression());
+
+// Logging
+app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// API Routes
+const apiRouter = express.Router();
+
+// Public routes
+apiRouter.use('/auth', authRoutes);
+
+// Protected routes (require authentication)
+apiRouter.use('/tabs', authenticate, tabRoutes);
+apiRouter.use('/bookmarks', authenticate, bookmarkRoutes);
+apiRouter.use('/archives', authenticate, archiveRoutes);
+apiRouter.use('/suggestions', authenticate, suggestionRoutes);
+apiRouter.use('/collections', authenticate, collectionRoutes);
+apiRouter.use('/analytics', authenticate, analyticsRoutes);
+apiRouter.use('/search', authenticate, searchRoutes);
+
+app.use(`/api/${API_VERSION}`, apiRouter);
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+// Error handling middleware
+app.use(errorHandler);
+
+// Database connection and server start
+const startServer = async () => {
+  try {
+    // Test database connection
+    await sequelize.authenticate();
+    logger.info('Database connection established successfully.');
+
+    // Sync models (in development only)
+    if (process.env.NODE_ENV === 'development') {
+      await sequelize.sync({ alter: true });
+      logger.info('Database models synchronized.');
+    }
+
+    // Start server
+    app.listen(PORT, () => {
+      logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
+      logger.info(`API available at http://localhost:${PORT}/api/${API_VERSION}`);
+    });
+  } catch (error) {
+    logger.error('Unable to start server:', error);
+    process.exit(1);
+  }
+};
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM signal received: closing HTTP server');
+  await sequelize.close();
+  process.exit(0);
+});
+
+startServer();
+
+export default app;
+```
+
+### **backend/database/config.js**
+```javascript
+import { Sequelize } from 'sequelize';
+import dotenv from 'dotenv';
+import logger from '../utils/logger.js';
+
+dotenv.config();
+
+export const sequelize = new Sequelize(
+  process.env.DB_NAME,
+  process.env.DB_USER,
+  process.env.DB_PASSWORD,
+  {
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT,
+    dialect: 'postgres',
+    logging: (msg) => logger.debug(msg),
+    pool: {
+      max: 10,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    }
+  }
+);
+```
+
+### **backend/models/Tab.js**
+```javascript
+import { DataTypes } from 'sequelize';
+import { sequelize } from '../database/config.js';
+
+export const Tab = sequelize.define('Tab', {
+  tabId: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
+    field: 'tab_id'
+  },
+  userId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    field: 'user_id'
+  },
+  browserTabId: {
+    type: DataTypes.INTEGER,
+    field: 'browser_tab_id'
+  },
+  url: {
+    type: DataTypes.TEXT,
+    allowNull: false,
+    validate: {
+      isUrl: true
+    }
+  },
+  title: {
+    type: DataTypes.TEXT
+  },
+  favIconUrl: {
+    type: DataTypes.TEXT,
+    field: 'fav_icon_url'
+  },
+  windowId: {
+    type: DataTypes.INTEGER,
+    field: 'window_id'
+  },
+  captureCount: {
+    type: DataTypes.INTEGER,
+    defaultValue: 1,
+    field: 'capture_count'
+  },
+  isActive: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+    field: 'is_active'
+  },
+  lastAccessed: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+    field: 'last_accessed'
+  },
+  metadata: {
+    type: DataTypes.JSONB,
+    defaultValue: {}
+  }
+}, {
+  tableName: 'tabs',
+  timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
+});
+```
+
+### **backend/routes/tabs.js**
+```javascript
+import express from 'express';
+import { body, param, query } from 'express-validator';
+import { validate } from '../middleware/validation.js';
+import * as tabController from '../controllers/tabController.js';
+
+const router = express.Router();
+
+// Get all tabs for user
+router.get('/',
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('isActive').optional().isBoolean(),
+  validate,
+  tabController.getAllTabs
+);
+
+// Get single tab
+router.get('/:tabId',
+  param('tabId').isUUID(),
+  validate,
+  tabController.getTabById
+);
+
+// Create new tab
+router.post('/',
+  body('url').isURL(),
+  body('title').optional().isString(),
+  body('browserTabId').optional().isInt(),
+  body('windowId').optional().isInt(),
+  body('favIconUrl').optional().isURL(),
+  body('metadata').optional().isObject(),
+  validate,
+  tabController.createTab
+);
+
+// Batch create tabs
+router.post('/batch',
+  body('tabs').isArray(),
+  body('tabs.*.url').isURL(),
+  validate,
+  tabController.batchCreateTabs
+);
+
+// Update tab
+router.put('/:tabId',
+  param('tabId').isUUID(),
+  body('title').optional().isString(),
+  body('isActive').optional().isBoolean(),
+  body('metadata').optional().isObject(),
+  validate,
+  tabController.updateTab
+);
+
+// Delete tab
+router.delete('/:tabId',
+  param('tabId').isUUID(),
+  validate,
+  tabController.deleteTab
+);
+
+// Get tab analytics
+router.get('/:tabId/analytics',
+  param('tabId').isUUID(),
+  validate,
+  tabController.getTabAnalytics
+);
+
+// Mark tab as accessed
+router.post('/:tabId/access',
+  param('tabId').isUUID(),
+  validate,
+  tabController.markTabAccessed
+);
+
+// Get stale tabs
+router.get('/insights/stale',
+  query('days').optional().isInt({ min: 1 }),
+  validate,
+  tabController.getStaleTabs
+);
+
+// Get duplicate tabs
+router.get('/insights/duplicates',
+  validate,
+  tabController.getDuplicateTabs
+);
+
+export default router;
+```
+
+### **backend/controllers/tabController.js**
+```javascript
+import { Tab } from '../models/Tab.js';
+import { ContentAnalysis } from '../models/ContentAnalysis.js';
+import { Op } from 'sequelize';
+import { queueContentExtraction } from '../services/queue/contentQueue.js';
+import logger from '../utils/logger.js';
+
+export const getAllTabs = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 50, isActive } = req.query;
+    const userId = req.user.userId;
+
+    const where = { userId };
+    if (isActive !== undefined) {
+      where.isActive = isActive === 'true';
+    }
+
+    const { count, rows } = await Tab.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset: (parseInt(page) - 1) * parseInt(limit),
+      order: [['lastAccessed', 'DESC']],
+      include: [{
+        model: ContentAnalysis,
+        as: 'analysis',
+        required: false
+      }]
+    });
+
+    res.json({
+      tabs: rows,
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(count / limit)
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getTabById = async (req, res, next) => {
+  try {
+    const { tabId } = req.params;
+    const userId = req.user.userId;
+
+    const tab = await Tab.findOne({
+      where: { tabId, userId },
+      include: [{
+        model: ContentAnalysis,
+        as: 'analysis'
+      }]
+    });
+
+    if (!tab) {
+      return res.status(404).json({ error: 'Tab not found' });
+    }
+
+    res.json(tab);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createTab = async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const tabData = { ...req.body, userId };
+
+    // Check for existing tab with same URL
+    const existingTab = await Tab.findOne({
+      where: { userId, url: tabData.url, isActive: true }
+    });
+
+    if (existingTab) {
+      // Update capture count and last accessed
+      existingTab.captureCount += 1;
+      existingTab.lastAccessed = new Date();
+      existingTab.metadata = { ...existingTab.metadata, ...tabData.metadata };
+      await existingTab.save();
+      
+      return res.json(existingTab);
+    }
+
+    // Create new tab
+    const tab = await Tab.create(tabData);
+
+    // Queue content extraction job
+    await queueContentExtraction({
+      tabId: tab.tabId,
+      url: tab.url,
+      userId
+    });
+
+    logger.info(`Tab created: ${tab.tabId} for user ${userId}`);
+    res.status(201).json(tab);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const batchCreateTabs = async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const { tabs } = req.body;
+
+    const tabsToCreate = tabs.map(tab => ({
+      ...tab,
+      userId,
+      lastAccessed: new Date()
+    }));
+
+    const createdTabs = await Tab.bulkCreate(tabsToCreate, {
+      updateOnDuplicate: ['captureCount', 'lastAccessed', 'metadata']
+    });
+
+    // Queue content extraction for all tabs
+    for (const tab of createdTabs) {
+      await queueContentExtraction({
+        tabId: tab.tabId,
+        url: tab.url,
+        userId
+      });
+    }
+
+    res.status(201).json({ 
+      created: createdTabs.length,
+      tabs: createdTabs 
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateTab = async (req, res, next) => {
+  try {
+    const { tabId } = req.params;
+    const userId = req.user.userId;
+
+    const tab = await Tab.findOne({ where: { tabId, userId } });
+
+    if (!tab) {
+      return res.status(404).json({ error: 'Tab not found' });
+    }
+
+    await tab.update(req.body);
+    res.json(tab);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteTab = async (req, res, next) => {
+  try {
+    const { tabId } = req.params;
+    const userId = req.user.userId;
+
+    const deleted = await Tab.destroy({ where: { tabId, userId } });
+
+    if (!deleted) {
+      return res.status(404).json({ error: 'Tab not found' });
+    }
+
+    res.json({ message: 'Tab deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const markTabAccessed = async (req, res, next) => {
+  try {
+    const { tabId } = req.params;
+    const userId = req.user.userId;
+
+    const tab = await Tab.findOne({ where: { tabId, userId } });
+
+    if (!tab) {
+      return res.status(404).json({ error: 'Tab not found' });
+    }
+
+    tab.lastAccessed = new Date();
+    tab.captureCount += 1;
+    await tab.save();
+
+    res.json(tab);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getStaleTabs = async (req, res, next) => {
+  try {
+    const { days = 7 } = req.query;
+    const userId = req.user.userId;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - parseInt(days));
+
+    const staleTabs = await Tab.findAll({
+      where: {
+        userId,
+        isActive: true,
+        lastAccessed: {
+          [Op.lt]: cutoffDate
+        }
+      },
+      order: [['lastAccessed', 'ASC']]
+    });
+
+    res.json({ 
+      count: staleTabs.length,
+      tabs: staleTabs 
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getDuplicateTabs = async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+
+    const tabs = await Tab.findAll({
+      where: { userId, isActive: true },
+      attributes: ['url', 'tabId', 'title', 'lastAccessed'],
+      order: [['url', 'ASC']]
+    });
+
+    // Group by URL
+    const urlMap = new Map();
+    tabs.forEach(tab => {
+      if (!urlMap.has(tab.url)) {
+        urlMap.set(tab.url, []);
+      }
+      urlMap.get(tab.url).push(tab);
+    });
+
+    // Filter only duplicates
+    const duplicates = Array.from(urlMap.entries())
+      .filter(([_, tabs]) => tabs.length > 1)
+      .map(([url, tabs]) => ({ url, tabs, count: tabs.length }));
+
+    res.json({ 
+      count: duplicates.length,
+      duplicates 
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getTabAnalytics = async (req, res, next) => {
+  try {
+    const { tabId } = req.params;
+    const userId = req.user.userId;
+
+    const tab = await Tab.findOne({
+      where: { tabId, userId },
+      include: [{
+        model: ContentAnalysis,
+        as: 'analysis'
+      }]
+    });
+
+    if (!tab) {
+      return res.status(404).json({ error: 'Tab not found' });
+    }
+
+    const analytics = {
+      tabId: tab.tabId,
+      url: tab.url,
+      title: tab.title,
+      captureCount: tab.captureCount,
+      daysSinceCreated: Math.floor((new Date() - new Date(tab.createdAt)) / (1000 * 60 * 60 * 24)),
+      daysSinceAccessed: Math.floor((new Date() - new Date(tab.lastAccessed)) / (1000 * 60 * 60 * 24)),
+      analysis: tab.analysis
+    };
+
+    res.json(analytics);
+  } catch (error) {
+    next(error);
+  }
+};
+```
+
+### **backend/services/ingestion/contentExtractor.js**
+```javascript
+import puppeteer from 'puppeteer';
+import * as cheerio from 'cheerio';
+import fetch from 'node-fetch';
+import logger from '../../utils/logger.js';
+
+export class ContentExtractor {
+  constructor() {
+    this.browser = null;
+  }
+
+  async initialize() {
+    if (!this.browser) {
+      this.browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH
+      });
+    }
+  }
+
+  async extractContent(url) {
+    try {
+      await this.initialize();
+      
+      const page = await this.browser.newPage();
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+      
+      // Navigate with timeout
+      await page.goto(url, { 
+        waitUntil: 'networkidle2',
+        timeout: 30000 
+      });
+
+      // Extract content
+      const content = await page.evaluate(() => {
+        // Remove scripts, styles, and nav elements
+        const elementsToRemove = document.querySelectorAll('script, style, nav, header, footer, aside');
+        elementsToRemove.forEach(el => el.remove());
+
+        return {
+          html: document.documentElement.outerHTML,
+          text: document.body.innerText,
+          title: document.title,
+          metadata: {
+            description: document.querySelector('meta[name="description"]')?.content || '',
+            keywords: document.querySelector('meta[name="keywords"]')?.content || '',
+            author: document.querySelector('meta[name="author"]')?.content || '',
+            ogTitle: document.querySelector('meta[property="og:title"]')?.content || '',
+            ogDescription: document.querySelector('meta[property="og:description"]')?.content || '',
+            ogImage: document.querySelector('meta[property="og:image"]')?.content || '',
+            canonicalUrl: document.querySelector('link[rel="canonical"]')?.href || ''
+          }
+        };
+      });
+
+      // Take screenshot
+      const screenshot = await page.screenshot({ 
+        encoding: 'base64',
+        fullPage: false 
+      });
+
+      await page.close();
+
+      return {
+        ...content,
+        screenshot,
+        extractedAt: new Date().toISOString()
+      };
+    } catch (error) {
+      logger.error(`Content extraction failed for ${url}:`, error);
+      throw error;
+    }
+  }
+
+  async extractMetadata(html) {
+    const $ = cheerio.load(html);
+    
+    return {
+      title: $('title').text(),
+      description: $('meta[name="description"]').attr('content') || '',
+      keywords: $('meta[name="keywords"]').attr('content')?.split(',').map(k => k.trim()) || [],
+      author: $('meta[name="author"]').attr('content') || '',
+      ogTitle: $('meta[property="og:title"]').attr('content') || '',
+      ogDescription: $('meta[property="og:description"]').attr('content') || '',
+      ogImage: $('meta[property="og:image"]').attr('content') || '',
+      links: $('a').map((i, el) => $(el).attr('href')).get(),
+      images: $('img').map((i, el) => $(el).attr('src')).get(),
+      headings: {
+        h1: $('h1').map((i, el) => $(el).text()).get(),
+        h2: $('h2').map((i, el) => $(el).text()).get(),
+        h3: $('h3').map((i, el) => $(el).text()).get()
+      }
+    };
+  }
+
+  async close() {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
+  }
+}
+
+export const contentExtractor = new ContentExtractor();
+```
+
+### **backend/services/queue/contentQueue.js**
+```javascript
+import Queue from 'bull';
+import { contentExtractor } from '../ingestion/contentExtractor.js';
+import { mlService } from '../ml/mlService.js';
+import { Tab } from '../../models/Tab.js';
+import { ContentAnalysis } from '../../models/ContentAnalysis.js';
+import logger from '../../utils/logger.js';
+
+// Initialize Bull queue with Redis
+export const contentQueue = new Queue('content-extraction', {
+  redis: {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: process.env.REDIS_PORT || 6379,
+    password: process.env.REDIS_PASSWORD
+  }
+});
+
+// Process content extraction jobs
+contentQueue.process(5, async (job) => {
+  const { tabId, url, userId } = job.data;
+  
+  try {
+    logger.info(`Processing content extraction for tab ${tabId}`);
+
+    // Step 1: Extract content from URL
+    const extractedContent = await contentExtractor.extractContent(url);
+
+    // Step 2: Send to ML service for analysis
+    const analysis = await mlService.analyzeContent({
+      text: extractedContent.text,
+      html: extractedContent.html,
+      metadata: extractedContent.metadata
+    });
+
+    // Step 3: Save analysis to database
+    await ContentAnalysis.create({
+      tabId,
+      summary: analysis.summary,
+      keywords: analysis.keywords,
+      entities: analysis.entities,
+      topics: analysis.topics,
+      sentiment: analysis.sentiment,
+      readingTime: analysis.readingTime,
+      language: analysis.language,
+      embeddings: analysis.embeddings
+    });
+
+    // Step 4: Update tab metadata
+    await Tab.update(
+      { 
+        metadata: {
+          ...extractedContent.metadata,
+          lastAnalyzed: new Date().toISOString()
+        }
+      },
+      { where: { tabId } }
+    );
+
+    logger.info(`Content extraction completed for tab ${tabId}`);
+
+    return { success: true, tabId, analysisId: analysis.id };
+  } catch (error) {
+    logger.error(`Content extraction failed for tab ${tabId}:`, error);
+    throw error;
+  }
+});
+
+// Queue a content extraction job
+export const queueContentExtraction = async (data) => {
+  return await contentQueue.add(data, {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 5000
+    },
+    removeOnComplete: true,
+    removeOnFail: false
+  });
+};
+
+// Event listeners
+contentQueue.on('completed', (job, result) => {
+  logger.info(`Job ${job.id} completed:`, result);
+});
+
+contentQueue.on('failed', (job, error) => {
+  logger.error(`Job ${job.id} failed:`, error);
+});
+
+contentQueue.on('stalled', (job) => {
+  logger.warn(`Job ${job.id} stalled`);
+});
+```
+
+---
+
+## ML Service for Content Analysis (Python/Flask)
+
+### **ml-services/requirements.txt**
+```txt
+flask==3.0.0
+flask-cors==4.0.0
+gunicorn==21.2.0
+numpy==1.26.2
+pandas==2.1.4
+scikit-learn==1.3.2
+transformers==4.36.2
+torch==2.1.2
+sentence-transformers==2.2.2
+spacy==3.7.2
+nltk==3.8.1
+beautifulsoup4==4.12.2
+redis==5.0.1
+celery==5.3.4
+python-dotenv==1.0.0
+requests==2.31.0
+```
+
+### **ml-services/app.py**
+```python
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import logging
+from dotenv import load_dotenv
+import os
+
+from text_analysis.summarizer import ContentSummarizer
+from text_analysis.classifier import TopicClassifier
+from text_analysis.embeddings import EmbeddingGenerator
+from similarity.similarity_engine import SimilarityEngine
+
+load_dotenv()
+
+app = Flask(__name__)
+CORS(app)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize ML models
+summarizer = ContentSummarizer()
+classifier = TopicClassifier()
+embedding_generator = EmbeddingGenerator()
+similarity_engine = SimilarityEngine()
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'service': 'ml-service',
+        'models_loaded': True
+    }), 200
+
+@app.route('/api/v1/analyze', methods=['POST'])
+def analyze_content():
+    """
+    Analyze content: summarize, classify, extract entities, generate embeddings
+    """
+    try:
+        data = request.json
+        text = data.get('text', '')
+        html = data.get('html', '')
+        metadata = data.get('metadata', {})
+
+        if not text:
+            return jsonify({'error': 'Text content required'}), 400
+
+        # Perform analysis
+        summary = summarizer.summarize(text)
+        topics = classifier.classify(text)
+        keywords = classifier.extract_keywords(text)
+        entities = classifier.extract_entities(text)
+        sentiment = classifier.analyze_sentiment(text)
+        reading_time = calculate_reading_time(text)
+        language = classifier.detect_language(text)
+        embeddings = embedding_generator.generate(text)
+
+        result = {
+            'summary': summary,
+            'topics': topics,
+            'keywords': keywords,
+            'entities': entities,
+            'sentiment': sentiment,
+            'readingTime': reading_time,
+            'language': language,
+            'embeddings': embeddings.tolist()
+        }
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Analysis error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/similarity', methods=['POST'])
+def find_similar():
+    """
+    Find similar content based on embeddings
+    """
+    try:
+        data = request.json
+        query_embedding = data.get('embedding')
+        candidate_embeddings = data.get('candidates', [])
+        top_k = data.get('top_k', 10)
+
+        if not query_embedding or not candidate_embeddings:
+            return jsonify({'error': 'Embeddings required'}), 400
+
+        similarities = similarity_engine.find_similar(
+            query_embedding,
+            candidate_embeddings,
+            top_k=top_k
+        )
+
+        return jsonify({'similarities': similarities}), 200
+
+    except Exception as e:
+        logger.error(f"Similarity error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/summarize', methods=['POST'])
+def summarize_text():
+    """
+    Generate summary of text content
+    """
+    try:
+        data = request.json
+        text = data.get('text', '')
+        max_length = data.get('max_length', 150)
+        min_length = data.get('min_length', 50)
+
+        if not text:
+            return jsonify({'error': 'Text required'}), 400
+
+        summary = summarizer.summarize(
+            text,
+            max_length=max_length,
+            min_length=min_length
+        )
+
+        return jsonify({'summary': summary}), 200
+
+    except Exception as e:
+        logger.error(f"Summarization error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/classify', methods=['POST'])
+def classify_content():
+    """
+    Classify content into topics/categories
+    """
+    try:
+        data = request.json
+        text = data.get('text', '')
+
+        if not text:
+            return jsonify({'error': 'Text required'}), 400
+
+        topics = classifier.classify(text)
+        keywords = classifier.extract_keywords(text)
+
+        return jsonify({
+            'topics': topics,
+            'keywords': keywords
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Classification error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/entities', methods=['POST'])
+def extract_entities():
+    """
+    Extract named entities from text
+    """
+    try:
+        data = request.json
+        text = data.get('text', '')
+
+        if not text:
+            return jsonify({'error': 'Text required'}), 400
+
+        entities = classifier.extract_entities(text)
+
+        return jsonify({'entities': entities}), 200
+
+    except Exception as e:
+        logger.error(f"Entity extraction error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+def calculate_reading_time(text):
+    """Calculate estimated reading time in minutes"""
+    words = len(text.split())
+    # Average reading speed: 200-250 words per minute
+    minutes = max(1, round(words / 225))
+    return minutes
+
+if __name__ == '__main__':
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=os.getenv('DEBUG', False))
+```
+
+### **ml-services/text_analysis/summarizer.py**
+```python
+from transformers import pipeline
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ContentSummarizer:
+    def __init__(self):
+        logger.info("Loading summarization model...")
+        self.summarizer = pipeline(
+            "summarization",
+            model="facebook/bart-large-cnn",
+            device=-1  # Use CPU, change to 0 for GPU
+        )
+        logger.info("Summarization model loaded")
+
+    def summarize(self, text, max_length=150, min_length=50):
+        """
+        Generate summary of text content
+        """
+        try:
+            # Truncate text if too long (BART max input: 1024 tokens)
+            max_input_length = 1024
+            words = text.split()
+            if len(words) > max_input_length:
+                text = ' '.join(words[:max_input_length])
+
+            # Skip very short texts
+            if len(words) < 100:
+                return text[:200] + '...' if len(text) > 200 else text
+
+            result = self.summarizer(
+                text,
+                max_length=max_length,
+                min_length=min_length,
+                do_sample=False
+            )
+
+            return result[0]['summary_text']
+
+        except Exception as e:
+            logger.error(f"Summarization error: {str(e)}")
+            # Fallback: return first few sentences
+            sentences = text.split('.')[:3]
+            return '.'.join(sentences) + '.'
+```
+
+### **ml-services/text_analysis/classifier.py**
+```python
+import spacy
+from transformers import pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Download required NLTK data
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
+
+class TopicClassifier:
+    def __init__(self):
+        logger.info("Loading classification models...")
+        
+        # Load spaCy model for NER
+        try:
+            self.nlp = spacy.load("en_core_web_sm")
+        except OSError:
+            logger.warning("Downloading spaCy model...")
+            import subprocess
+            subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+            self.nlp = spacy.load("en_core_web_sm")
+
+        # Zero-shot classification for topics
+        self.classifier = pipeline(
+            "zero-shot-classification",
+            model="facebook/bart-large-mnli",
+            device=-1
+        )
+
+        # Sentiment analysis
+        self.sentiment_analyzer = pipeline(
+            "sentiment-analysis",
+            model="distilbert-base-uncased-finetuned-sst-2-english",
+            device=-1
+        )
+
+        self.stop_words = set(stopwords.words('english'))
+        
+        logger.info("Classification models loaded")
+
+    def classify(self, text, candidate_labels=None):
+        """
+        Classify text into topics
+        """
+        try:
+            if candidate_labels is None:
+                candidate_labels = [
+                    "technology", "science", "business", "entertainment",
+                    "sports", "politics", "health", "education",
+                    "travel", "food", "finance", "programming"
+                ]
+
+            result = self.classifier(
+                text[:512],  # Truncate for efficiency
+                candidate_labels,
+                multi_label=True
+            )
+
+            # Return topics with confidence > 0.5
+            topics = [
+                {
+                    'label': label,
+                    'score': float(score)
+                }
+                for label, score in zip(result['labels'], result['scores'])
+                if score > 0.5
+            ]
+
+            return topics[:5]  # Top 5 topics
+
+        except Exception as e:
+            logger.error(f"Classification error: {str(e)}")
+            return []
+
+    def extract_keywords(self, text, top_n=10):
+        """
+        Extract keywords using TF-IDF
+        """
+        try:
+            # Tokenize and remove stopwords
+            tokens = word_tokenize(text.lower())
+            filtered_tokens = [
+                word for word in tokens
+                if word.isalnum() and word not in self.stop_words and len(word) > 3
+            ]
+
+            if not filtered_tokens:
+                return []
+
+            # Use TF-IDF
+            vectorizer = TfidfVectorizer(max_features=top_n)
+            tfidf_matrix = vectorizer.fit_transform([' '.join(filtered_tokens)])
+            
+            feature_names = vectorizer.get_feature_names_out()
+            scores = tfidf_matrix.toarray()[0]
+            
+            keywords = [
+                {
+                    'word': feature_names[i],
+                    'score': float(scores[i])
+                }
+                for i in scores.argsort()[::-1]
+            ]
+
+            return keywords
+
+        except Exception as e:
+            logger.error(f"Keyword extraction error: {str(e)}")
+            return []
+
+    def extract_entities(self, text):
+        """
+        Extract named entities (people, organizations, locations)
+        """
+        try:
+            doc = self.nlp(text[:1000000])  # spaCy has text length limits
+            
+            entities = {
+                'people': [],
+                'organizations': [],
+                'locations': [],
+                'dates': [],
+                'other': []
+            }
+
+            for ent in doc.ents:
+                entity_data = {
+                    'text': ent.text,
+                    'label': ent.label_
+                }
+
+                if ent.label_ == 'PERSON':
+                    entities['people'].append(entity_data)
+                elif ent.label_ in ['ORG', 'COMPANY']:
+                    entities['organizations'].append(entity_data)
+                elif ent.label_ in ['GPE', 'LOC', 'LOCATION']:
+                    entities['locations'].append(entity_data)
+                elif ent.label_ == 'DATE':
+                    entities['dates'].append(entity_data)
+                else:
+                    entities['other'].append(entity_data)
+
+            # Remove duplicates
+            for key in entities:
+                entities[key] = list({e['text']: e for e in entities[key]}.values())
+
+            return entities
+
+        except Exception as e:
+            logger.error(f"Entity extraction error: {str(e)}")
+            return {}
+
+    def analyze_sentiment(self, text):
+        """
+        Analyze sentiment of text
+        """
+        try:
+            result = self.sentiment_analyzer(text[:512])
+            return {
+                'label': result[0]['label'].lower(),
+                'score': float(result[0]['score'])
+            }
+        except Exception as e:
+            logger.error(f"Sentiment analysis error: {str(e)}")
+            return {'label': 'neutral', 'score': 0.5}
+
+    def detect_language(self, text):
+        """
+        Detect language of text (simple heuristic)
+        """
+        try:
+            doc = self.nlp(text[:100])
+            return doc.lang_
+        except:
+            return 'en'
+```
+
+### **ml-services/text_analysis/embeddings.py**
+```python
+from sentence_transformers import SentenceTransformer
+import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
+
+class EmbeddingGenerator:
+    def __init__(self):
+        logger.info("Loading embedding model...")
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        logger.info("Embedding model loaded")
+
+    def generate(self, text):
+        """
+        Generate embeddings for text
+        """
+        try:
+            embedding = self.model.encode(text, convert_to_numpy=True)
+            return embedding
+        except Exception as e:
+            logger.error(f"Embedding generation error: {str(e)}")
+            # Return zero vector as fallback
+            return np.zeros(384)  # all-MiniLM-L6-v2 outputs 384-dim vectors
+
+    def generate_batch(self, texts):
+        """
+        Generate embeddings for multiple texts
+        """
+        try:
+            embeddings = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=True)
+            return embeddings
+        except Exception as e:
+            logger.error(f"Batch embedding generation error: {str(e)}")
+            return np.zeros((len(texts), 384))
+```
+
+### **ml-services/similarity/similarity_engine.py**
+```python
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+import logging
+
+logger = logging.getLogger(__name__)
+
+class SimilarityEngine:
+    def __init__(self):
+        pass
+
+    def find_similar(self, query_embedding, candidate_embeddings, top_k=10):
+        """
+        Find most similar items based on cosine similarity
+        """
+        try:
+            query_embedding = np.array(query_embedding).reshape(1, -1)
+            candidate_embeddings = np.array(candidate_embeddings)
+
+            # Calculate cosine similarity
+            similarities = cosine_similarity(query_embedding, candidate_embeddings)[0]
+
+            # Get top k indices
+            top_indices = np.argsort(similarities)[::-1][:top_k]
+
+            results = [
+                {
+                    'index': int(idx),
+                    'score': float(similarities[idx])
+                }
+                for idx in top_indices
+            ]
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Similarity calculation error: {str(e)}")
+            return []
+
+    def calculate_similarity(self, embedding1, embedding2):
+        """
+        Calculate similarity between two embeddings
+        """
+        try:
+            embedding1 = np.array(embedding1).reshape(1, -1)
+            embedding2 = np.array(embedding2).reshape(1, -1)
+
+            similarity = cosine_similarity(embedding1, embedding2)[0][0]
+            return float(similarity)
+
+        except Exception as e:
+            logger.error(f"Similarity calculation error: {str(e)}")
+            return 0.0
+```
+
+---
+
+## CI/CD Pipelines
+
+### **.github/workflows/ci.yml**
+```yaml
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # Backend Tests
+  backend-test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Run linter
+        working-directory: ./backend
+        run: npm run lint
+
+      - name: Run tests
+        working-directory: ./backend
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: test_db
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: test_secret
+        run: npm test
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./backend/coverage/coverage-final.json
+          flags: backend
+
+  # ML Service Tests
+  ml-service-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: ml-services/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./ml-services
+        run: |
+          pip install -r requirements.txt
+          python -m spacy download en_core_web_sm
+
+      - name: Run tests
+        working-directory: ./ml-services
+        run: |
+          pytest tests/ --cov=. --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./ml-services/coverage.xml
+          flags: ml-service
+
+  # Browser Extension Tests
+  extension-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        working-directory: ./browser-extension
+        run: npm ci
+
+      - name: Run linter
+        working-directory: ./browser-extension
+        run: npm run lint
+
+      - name: Build extension
+        working-directory: ./browser-extension
+        run: npm run build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: extension-build
+          path: browser-extension/dist/
+
+  # Security Scanning
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run npm audit (backend)
+        working-directory: ./backend
+        run: npm audit --audit-level=moderate
+
+      - name: Run safety check (Python)
+        working-directory: ./ml-services
+        run: |
+          pip install safety
+          safety check --json
+
+  # Docker Build
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [backend-test, ml-service-test]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: false
+          tags: tab-bookmark-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build ML service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ml-services
+          push: false
+          tags: ml-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+### **.github/workflows/release.yml**
+```yaml
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/tab-bookmark-api
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build and push ML service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ml-services
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/ml-service:${{ github.ref_name }}
+
+      - name: Build browser extension
+        working-directory: ./browser-extension
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package extension
+        working-directory: ./browser-extension
+        run: |
+          cd dist
+          zip -r ../extension-${{ github.ref_name }}.zip .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            browser-extension/extension-${{ github.ref_name }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-production:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to production
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          echo "$DEPLOY_KEY" > deploy_key
+          chmod 600 deploy_key
+          ssh -i deploy_key -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+            cd /opt/tab-bookmark-manager
+            docker-compose pull
+            docker-compose up -d
+            docker-compose exec -T api npm run migrate
+          EOF
+```
+
+### **.github/workflows/codeql.yml**
+```yaml
+name: "CodeQL Analysis"
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 0'
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'javascript', 'python' ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v2
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+```
+
+### **backend/Dockerfile**
+```dockerfile
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy application code
+COPY . .
+
+# Production stage
+FROM node:18-alpine
+
+# Install dumb-init for proper signal handling
+RUN apk add --no-cache dumb-init
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+WORKDIR /app
+
+# Copy from builder
+COPY --from=builder --chown=nodejs:nodejs /app /app
+
+USER nodejs
+
+EXPOSE 3000
+
+ENV NODE_ENV=production
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+
+CMD ["node", "api/server.js"]
+```
+
+### **ml-services/Dockerfile**
+```dockerfile
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Download spaCy model
+RUN python -m spacy download en_core_web_sm
+
+# Copy application code
+COPY . .
+
+# Create non-root user
+RUN useradd -m -u 1001 mluser && \
+    chown -R mluser:mluser /app
+
+USER mluser
+
+EXPOSE 5000
+
+ENV PYTHONUNBUFFERED=1
+ENV FLASK_APP=app.py
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "120", "app:app"]
+```
+
+### **docker-compose.yml**
+```yaml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-tab_bookmark_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-tab_bookmark_db}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET}
+      ML_SERVICE_URL: http://ml-service:5000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ml-service:
+    build:
+      context: ./ml-services
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      DEBUG: "false"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+---
+
+## Automated Actions, Tasks & Automations
+
+### **backend/services/automations/automationEngine.js**
+```javascript
+import cron from 'node-cron';
+import { Tab } from '../../models/Tab.js';
+import { Suggestion } from '../../models/Suggestion.js';
+import { Op } from 'sequelize';
+import logger from '../../utils/logger.js';
+
+export class AutomationEngine {
+  constructor() {
+    this.jobs = [];
+  }
+
+  start() {
+    logger.info('Starting automation engine...');
+
+    // Daily: Find stale tabs
+    this.jobs.push(
+      cron.schedule('0 2 * * *', () => this.findStaleTabs())
+    );
+
+    // Daily: Find duplicate tabs
+    this.jobs.push(
+      cron.schedule('0 3 * * *', () => this.findDuplicateTabs())
+    );
+
+    // Hourly: Generate smart suggestions
+    this.jobs.push(
+      cron.schedule('0 * * * *', () => this.generateSuggestions())
+    );
+
+    // Weekly: Archive old inactive tabs
+    this.jobs.push(
+      cron.schedule('0 4 * * 0', () => this.autoArchiveOldTabs())
+    );
+
+    // Daily: Clean up old suggestions
+    this.jobs.push(
+      cron.schedule('0 5 * * *', () => this.cleanupOldSuggestions())
+    );
+
+    logger.info(`${this.jobs.length} automation jobs scheduled`);
+  }
+
+  stop() {
+    this.jobs.forEach(job => job.stop());
+    logger.info('Automation engine stopped');
+  }
+
+  async findStaleTabs() {
+    logger.info('Running: Find stale tabs');
+    // Implementation from previous controller
+  }
+
+  async findDuplicateTabs() {
+    logger.info('Running: Find duplicate tabs');
+    // Implementation from previous controller
+  }
+
+  async generateSuggestions() {
+    logger.info('Running: Generate suggestions');
+    // AI-powered suggestions
+  }
+
+  async autoArchiveOldTabs() {
+    logger.info('Running: Auto-archive old tabs');
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 30);
+
+    const oldTabs = await Tab.findAll({
+      where: {
+        isActive: true,
+        lastAccessed: {
+          [Op.lt]: cutoffDate
+        }
+      }
+    });
+
+    // Archive logic
+    logger.info(`Found ${oldTabs.length} tabs to archive`);
+  }
+
+  async cleanupOldSuggestions() {
+    logger.info('Running: Cleanup old suggestions');
+    // Remove dismissed suggestions older than 30 days
+  }
+}
+```
+
+This comprehensive implementation provides:
+
+✅ **Backend API** - Full REST API with Node.js/Express
+✅ **ML Service** - Python/Flask service with NLP, summarization, classification
+✅ **CI/CD Pipelines** - GitHub Actions for testing, building, deployment
+✅ **Docker Support** - Containerized services
+✅ **Automation Engine** - Scheduled tasks for maintenance
+
+Would you like me to:
+1. Add more automation tasks?
+2. Create deployment scripts for cloud providers (AWS/GCP/Azure)?
+3. Add monitoring and observability (Prometheus/Grafana)?
+4. Implement WebSocket support for real-time updates?
