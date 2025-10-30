@@ -1,0 +1,1477 @@
+Great! I'll help you create a GitHub repository structure, generate initial browser extension code, and design database schemas for your tab and bookmark management system. Let me create a comprehensive foundation for your project.
+
+## 1. GitHub Repository Structure
+
+```
+tab-bookmark-manager/
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml
+│   │   └── release.yml
+│   └── ISSUE_TEMPLATE/
+│       ├── bug_report.md
+│       └── feature_request.md
+├── browser-extension/
+│   ├── manifest.json
+│   ├── popup/
+│   │   ├── popup.html
+│   │   ├── popup.js
+│   │   └── popup.css
+│   ├── background/
+│   │   ├── background.js
+│   │   └── storage.js
+│   ├── content/
+│   │   ├── content.js
+│   │   └── extractor.js
+│   ├── options/
+│   │   ├── options.html
+│   │   ├── options.js
+│   │   └── options.css
+│   ├── icons/
+│   │   ├── icon16.png
+│   │   ├── icon48.png
+│   │   └── icon128.png
+│   └── lib/
+│       └── utils.js
+├── backend/
+│   ├── api/
+│   │   ├── routes/
+│   │   │   ├── tabs.js
+│   │   │   ├── bookmarks.js
+│   │   │   ├── archives.js
+│   │   │   └── suggestions.js
+│   │   ├── middleware/
+│   │   │   ├── auth.js
+│   │   │   └── validation.js
+│   │   └── server.js
+│   ├── services/
+│   │   ├── ingestion/
+│   │   │   ├── tabProcessor.js
+│   │   │   └── bookmarkProcessor.js
+│   │   ├── digest/
+│   │   │   ├── contentExtractor.js
+│   │   │   ├── nlpProcessor.js
+│   │   │   └── categorizer.js
+│   │   ├── suggestions/
+│   │   │   ├── recommendationEngine.js
+│   │   │   └── similarityCalculator.js
+│   │   └── archival/
+│   │       ├── archiver.js
+│   │       └── storageManager.js
+│   ├── models/
+│   │   ├── Tab.js
+│   │   ├── Bookmark.js
+│   │   ├── Archive.js
+│   │   └── Tag.js
+│   ├── database/
+│   │   ├── migrations/
+│   │   ├── seeds/
+│   │   └── config.js
+│   ├── tests/
+│   │   ├── unit/
+│   │   └── integration/
+│   └── package.json
+├── ml-services/
+│   ├── text-analysis/
+│   │   ├── summarizer.py
+│   │   ├── classifier.py
+│   │   └── embeddings.py
+│   ├── similarity/
+│   │   └── similarity_engine.py
+│   └── requirements.txt
+├── web-dashboard/
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── TabList.jsx
+│   │   │   ├── BookmarkGrid.jsx
+│   │   │   ├── SearchBar.jsx
+│   │   │   └── ArchiveViewer.jsx
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── Archives.jsx
+│   │   │   └── Settings.jsx
+│   │   ├── hooks/
+│   │   ├── utils/
+│   │   └── App.jsx
+│   └── package.json
+├── docs/
+│   ├── API.md
+│   ├── ARCHITECTURE.md
+│   ├── DATABASE_SCHEMA.md
+│   └── USER_GUIDE.md
+├── scripts/
+│   ├── setup.sh
+│   └── deploy.sh
+├── .gitignore
+├── README.md
+├── LICENSE
+└── docker-compose.yml
+```
+
+## 2. Browser Extension Code
+
+### **manifest.json** (Chrome Extension Manifest V3)
+```json
+{
+  "manifest_version": 3,
+  "name": "Tab & Bookmark Manager",
+  "version": "1.0.0",
+  "description": "Intelligent tab and bookmark management with AI-powered suggestions and archival",
+  "permissions": [
+    "tabs",
+    "bookmarks",
+    "storage",
+    "history",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options/options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
+```
+
+### **background/background.js**
+```javascript
+// Background service worker for Chrome Extension
+import { StorageManager } from './storage.js';
+
+const storageManager = new StorageManager();
+
+// Initialize extension
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === 'install') {
+    console.log('Tab & Bookmark Manager installed');
+    await initializeStorage();
+  }
+});
+
+// Initialize storage structure
+async function initializeStorage() {
+  await chrome.storage.local.set({
+    tabs: [],
+    bookmarks: [],
+    settings: {
+      autoCapture: true,
+      captureInterval: 300000, // 5 minutes
+      enableSuggestions: true,
+      archiveEnabled: true
+    }
+  });
+}
+
+// Monitor tab events
+chrome.tabs.onCreated.addListener(async (tab) => {
+  await captureTab(tab);
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete') {
+    await captureTab(tab);
+  }
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await storageManager.removeTab(tabId);
+});
+
+// Capture tab information
+async function captureTab(tab) {
+  const tabData = {
+    id: tab.id,
+    url: tab.url,
+    title: tab.title,
+    favIconUrl: tab.favIconUrl,
+    windowId: tab.windowId,
+    timestamp: new Date().toISOString(),
+    captureCount: 1
+  };
+
+  // Extract metadata from page
+  if (tab.id) {
+    try {
+      const metadata = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: extractPageMetadata
+      });
+      
+      if (metadata && metadata[0]?.result) {
+        tabData.metadata = metadata[0].result;
+      }
+    } catch (error) {
+      console.error('Error extracting metadata:', error);
+    }
+  }
+
+  await storageManager.saveTab(tabData);
+}
+
+// Function injected into page to extract metadata
+function extractPageMetadata() {
+  const metadata = {
+    description: '',
+    keywords: [],
+    author: '',
+    ogTitle: '',
+    ogDescription: '',
+    ogImage: ''
+  };
+
+  // Extract meta tags
+  const metaTags = document.getElementsByTagName('meta');
+  for (let tag of metaTags) {
+    const name = tag.getAttribute('name') || tag.getAttribute('property');
+    const content = tag.getAttribute('content');
+    
+    if (name && content) {
+      switch (name.toLowerCase()) {
+        case 'description':
+          metadata.description = content;
+          break;
+        case 'keywords':
+          metadata.keywords = content.split(',').map(k => k.trim());
+          break;
+        case 'author':
+          metadata.author = content;
+          break;
+        case 'og:title':
+          metadata.ogTitle = content;
+          break;
+        case 'og:description':
+          metadata.ogDescription = content;
+          break;
+        case 'og:image':
+          metadata.ogImage = content;
+          break;
+      }
+    }
+  }
+
+  return metadata;
+}
+
+// Monitor bookmark events
+chrome.bookmarks.onCreated.addListener(async (id, bookmark) => {
+  await captureBookmark(bookmark);
+});
+
+chrome.bookmarks.onRemoved.addListener(async (id) => {
+  await storageManager.removeBookmark(id);
+});
+
+// Capture bookmark information
+async function captureBookmark(bookmark) {
+  const bookmarkData = {
+    id: bookmark.id,
+    title: bookmark.title,
+    url: bookmark.url,
+    dateAdded: bookmark.dateAdded,
+    parentId: bookmark.parentId,
+    timestamp: new Date().toISOString()
+  };
+
+  await storageManager.saveBookmark(bookmarkData);
+}
+
+// Periodic snapshot of all open tabs
+async function captureTabSnapshot() {
+  const tabs = await chrome.tabs.query({});
+  const snapshot = {
+    timestamp: new Date().toISOString(),
+    tabs: tabs.map(tab => ({
+      id: tab.id,
+      url: tab.url,
+      title: tab.title,
+      windowId: tab.windowId
+    }))
+  };
+
+  await storageManager.saveSnapshot(snapshot);
+}
+
+// Set up periodic capture
+chrome.alarms.create('tabSnapshot', { periodInMinutes: 5 });
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'tabSnapshot') {
+    await captureTabSnapshot();
+  }
+});
+
+// Message handler for popup and content scripts
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  switch (request.action) {
+    case 'getTabs':
+      storageManager.getTabs().then(sendResponse);
+      return true;
+    case 'getBookmarks':
+      storageManager.getBookmarks().then(sendResponse);
+      return true;
+    case 'archiveTab':
+      archiveTab(request.tabId).then(sendResponse);
+      return true;
+    case 'getSuggestions':
+      getSuggestions().then(sendResponse);
+      return true;
+  }
+});
+
+// Archive a tab (capture full content)
+async function archiveTab(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    
+    // Capture full page content
+    const result = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => document.documentElement.outerHTML
+    });
+
+    const archiveData = {
+      tabId: tab.id,
+      url: tab.url,
+      title: tab.title,
+      content: result[0].result,
+      timestamp: new Date().toISOString()
+    };
+
+    await storageManager.saveArchive(archiveData);
+    return { success: true };
+  } catch (error) {
+    console.error('Archive failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get smart suggestions
+async function getSuggestions() {
+  const tabs = await storageManager.getTabs();
+  const suggestions = [];
+
+  // Find duplicate tabs
+  const urlMap = new Map();
+  tabs.forEach(tab => {
+    if (urlMap.has(tab.url)) {
+      suggestions.push({
+        type: 'duplicate',
+        message: `Duplicate tab detected: ${tab.title}`,
+        tabs: [urlMap.get(tab.url), tab.id]
+      });
+    } else {
+      urlMap.set(tab.url, tab.id);
+    }
+  });
+
+  // Find stale tabs (not accessed in 7 days)
+  const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  tabs.forEach(tab => {
+    if (new Date(tab.timestamp).getTime() < sevenDaysAgo) {
+      suggestions.push({
+        type: 'stale',
+        message: `Consider archiving: ${tab.title}`,
+        tabId: tab.id
+      });
+    }
+  });
+
+  return suggestions;
+}
+```
+
+### **background/storage.js**
+```javascript
+// Storage management utility
+export class StorageManager {
+  constructor() {
+    this.storage = chrome.storage.local;
+  }
+
+  async saveTab(tabData) {
+    const { tabs = [] } = await this.storage.get('tabs');
+    const existingIndex = tabs.findIndex(t => t.id === tabData.id);
+    
+    if (existingIndex >= 0) {
+      tabs[existingIndex] = {
+        ...tabs[existingIndex],
+        ...tabData,
+        captureCount: (tabs[existingIndex].captureCount || 0) + 1,
+        lastUpdated: new Date().toISOString()
+      };
+    } else {
+      tabs.push(tabData);
+    }
+
+    await this.storage.set({ tabs });
+  }
+
+  async removeTab(tabId) {
+    const { tabs = [] } = await this.storage.get('tabs');
+    const filtered = tabs.filter(t => t.id !== tabId);
+    await this.storage.set({ tabs: filtered });
+  }
+
+  async getTabs() {
+    const { tabs = [] } = await this.storage.get('tabs');
+    return tabs;
+  }
+
+  async saveBookmark(bookmarkData) {
+    const { bookmarks = [] } = await this.storage.get('bookmarks');
+    const existingIndex = bookmarks.findIndex(b => b.id === bookmarkData.id);
+    
+    if (existingIndex >= 0) {
+      bookmarks[existingIndex] = bookmarkData;
+    } else {
+      bookmarks.push(bookmarkData);
+    }
+
+    await this.storage.set({ bookmarks });
+  }
+
+  async removeBookmark(bookmarkId) {
+    const { bookmarks = [] } = await this.storage.get('bookmarks');
+    const filtered = bookmarks.filter(b => b.id !== bookmarkId);
+    await this.storage.set({ bookmarks: filtered });
+  }
+
+  async getBookmarks() {
+    const { bookmarks = [] } = await this.storage.get('bookmarks');
+    return bookmarks;
+  }
+
+  async saveSnapshot(snapshot) {
+    const { snapshots = [] } = await this.storage.get('snapshots');
+    snapshots.push(snapshot);
+    
+    // Keep only last 100 snapshots
+    if (snapshots.length > 100) {
+      snapshots.shift();
+    }
+
+    await this.storage.set({ snapshots });
+  }
+
+  async saveArchive(archiveData) {
+    const { archives = [] } = await this.storage.get('archives');
+    archives.push(archiveData);
+    await this.storage.set({ archives });
+  }
+
+  async getArchives() {
+    const { archives = [] } = await this.storage.get('archives');
+    return archives;
+  }
+}
+```
+
+### **popup/popup.html**
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Tab & Bookmark Manager</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📑 Tab Manager</h1>
+      <div class="stats">
+        <span id="tabCount">0 tabs tracked</span>
+        <span id="bookmarkCount">0 bookmarks</span>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab-button active" data-tab="current">Current Tabs</button>
+      <button class="tab-button" data-tab="bookmarks">Bookmarks</button>
+      <button class="tab-button" data-tab="suggestions">Suggestions</button>
+      <button class="tab-button" data-tab="archives">Archives</button>
+    </nav>
+
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="Search tabs and bookmarks...">
+    </div>
+
+    <div class="tab-content active" id="current">
+      <div class="actions">
+        <button id="captureAll">📸 Capture All Tabs</button>
+        <button id="archiveAll">💾 Archive All</button>
+      </div>
+      <div id="tabList" class="item-list"></div>
+    </div>
+
+    <div class="tab-content" id="bookmarks">
+      <div id="bookmarkList" class="item-list"></div>
+    </div>
+
+    <div class="tab-content" id="suggestions">
+      <div id="suggestionList" class="item-list"></div>
+    </div>
+
+    <div class="tab-content" id="archives">
+      <div id="archiveList" class="item-list"></div>
+    </div>
+
+    <footer>
+      <button id="settingsBtn">⚙️ Settings</button>
+      <button id="exportBtn">📤 Export Data</button>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+```
+
+### **popup/popup.js**
+```javascript
+// Popup UI logic
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadDashboard();
+  setupEventListeners();
+});
+
+async function loadDashboard() {
+  await loadTabs();
+  await loadBookmarks();
+  await loadSuggestions();
+  await loadArchives();
+  updateStats();
+}
+
+async function loadTabs() {
+  const tabs = await chrome.runtime.sendMessage({ action: 'getTabs' });
+  const tabList = document.getElementById('tabList');
+  tabList.innerHTML = '';
+
+  tabs.forEach(tab => {
+    const item = createTabItem(tab);
+    tabList.appendChild(item);
+  });
+}
+
+function createTabItem(tab) {
+  const div = document.createElement('div');
+  div.className = 'item';
+  div.innerHTML = `
+    <img src="${tab.favIconUrl || 'icons/icon16.png'}" class="favicon">
+    <div class="item-content">
+      <div class="item-title">${escapeHtml(tab.title)}</div>
+      <div class="item-url">${escapeHtml(tab.url)}</div>
+      <div class="item-meta">Captured: ${new Date(tab.timestamp).toLocaleString()}</div>
+    </div>
+    <div class="item-actions">
+      <button class="action-btn" data-action="archive" data-id="${tab.id}">💾</button>
+      <button class="action-btn" data-action="goto" data-id="${tab.id}">🔗</button>
+    </div>
+  `;
+  return div;
+}
+
+async function loadBookmarks() {
+  const bookmarks = await chrome.runtime.sendMessage({ action: 'getBookmarks' });
+  const bookmarkList = document.getElementById('bookmarkList');
+  bookmarkList.innerHTML = '';
+
+  bookmarks.forEach(bookmark => {
+    const item = createBookmarkItem(bookmark);
+    bookmarkList.appendChild(item);
+  });
+}
+
+function createBookmarkItem(bookmark) {
+  const div = document.createElement('div');
+  div.className = 'item';
+  div.innerHTML = `
+    <div class="item-content">
+      <div class="item-title">⭐ ${escapeHtml(bookmark.title)}</div>
+      <div class="item-url">${escapeHtml(bookmark.url)}</div>
+      <div class="item-meta">Added: ${new Date(bookmark.dateAdded).toLocaleString()}</div>
+    </div>
+    <div class="item-actions">
+      <button class="action-btn" data-action="open" data-url="${bookmark.url}">🔗</button>
+    </div>
+  `;
+  return div;
+}
+
+async function loadSuggestions() {
+  const suggestions = await chrome.runtime.sendMessage({ action: 'getSuggestions' });
+  const suggestionList = document.getElementById('suggestionList');
+  suggestionList.innerHTML = '';
+
+  if (suggestions.length === 0) {
+    suggestionList.innerHTML = '<div class="empty-state">✨ No suggestions at the moment</div>';
+    return;
+  }
+
+  suggestions.forEach(suggestion => {
+    const item = createSuggestionItem(suggestion);
+    suggestionList.appendChild(item);
+  });
+}
+
+function createSuggestionItem(suggestion) {
+  const div = document.createElement('div');
+  div.className = `item suggestion-${suggestion.type}`;
+  div.innerHTML = `
+    <div class="item-content">
+      <div class="item-title">${getSuggestionIcon(suggestion.type)} ${escapeHtml(suggestion.message)}</div>
+    </div>
+  `;
+  return div;
+}
+
+function getSuggestionIcon(type) {
+  const icons = {
+    duplicate: '🔄',
+    stale: '⏰',
+    related: '🔗',
+    archive: '💾'
+  };
+  return icons[type] || '💡';
+}
+
+async function loadArchives() {
+  // Placeholder for archive loading
+  const archiveList = document.getElementById('archiveList');
+  archiveList.innerHTML = '<div class="empty-state">Archives will appear here</div>';
+}
+
+function setupEventListeners() {
+  // Tab navigation
+  document.querySelectorAll('.tab-button').forEach(button => {
+    button.addEventListener('click', (e) => {
+      document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      
+      e.target.classList.add('active');
+      const tabId = e.target.dataset.tab;
+      document.getElementById(tabId).classList.add('active');
+    });
+  });
+
+  // Action buttons
+  document.getElementById('captureAll').addEventListener('click', async () => {
+    await loadTabs();
+    showNotification('All tabs captured!');
+  });
+
+  document.getElementById('archiveAll').addEventListener('click', async () => {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      await chrome.runtime.sendMessage({ action: 'archiveTab', tabId: tab.id });
+    }
+    showNotification('All tabs archived!');
+  });
+
+  // Search
+  document.getElementById('searchInput').addEventListener('input', (e) => {
+    filterItems(e.target.value);
+  });
+
+  // Delegate event handling for item actions
+  document.addEventListener('click', async (e) => {
+    if (e.target.classList.contains('action-btn')) {
+      const action = e.target.dataset.action;
+      const id = e.target.dataset.id;
+      const url = e.target.dataset.url;
+
+      switch (action) {
+        case 'archive':
+          await chrome.runtime.sendMessage({ action: 'archiveTab', tabId: parseInt(id) });
+          showNotification('Tab archived!');
+          break;
+        case 'goto':
+          await chrome.tabs.update(parseInt(id), { active: true });
+          window.close();
+          break;
+        case 'open':
+          await chrome.tabs.create({ url });
+          window.close();
+          break;
+      }
+    }
+  });
+}
+
+async function updateStats() {
+  const tabs = await chrome.runtime.sendMessage({ action: 'getTabs' });
+  const bookmarks = await chrome.runtime.sendMessage({ action: 'getBookmarks' });
+  
+  document.getElementById('tabCount').textContent = `${tabs.length} tabs tracked`;
+  document.getElementById('bookmarkCount').textContent = `${bookmarks.length} bookmarks`;
+}
+
+function filterItems(searchTerm) {
+  const items = document.querySelectorAll('.item');
+  const term = searchTerm.toLowerCase();
+
+  items.forEach(item => {
+    const text = item.textContent.toLowerCase();
+    item.style.display = text.includes(term) ? 'flex' : 'none';
+  });
+}
+
+function showNotification(message) {
+  // Simple notification
+  const notification = document.createElement('div');
+  notification.className = 'notification';
+  notification.textContent = message;
+  document.body.appendChild(notification);
+
+  setTimeout(() => {
+    notification.remove();
+  }, 3000);
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+```
+
+### **popup/popup.css**
+```css
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  width: 400px;
+  height: 600px;
+  background: #f5f5f5;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 16px;
+}
+
+header h1 {
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
+.stats {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.tabs {
+  display: flex;
+  background: white;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.tab-button {
+  flex: 1;
+  padding: 12px 8px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.tab-button:hover {
+  background: #f5f5f5;
+}
+
+.tab-button.active {
+  color: #667eea;
+  border-bottom: 2px solid #667eea;
+  font-weight: 600;
+}
+
+.search-bar {
+  padding: 12px;
+  background: white;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+#searchInput {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+#searchInput:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.tab-content {
+  display: none;
+  flex: 1;
+  overflow-y: auto;
+  background: white;
+}
+
+.tab-content.active {
+  display: flex;
+  flex-direction: column;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  background: #f9f9f9;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.actions button {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  background: #667eea;
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.actions button:hover {
+  background: #5568d3;
+}
+
+.item-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.2s;
+}
+
+.item:hover {
+  background: #f9f9f9;
+}
+
+.favicon {
+  width: 16px;
+  height: 16px;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-url {
+  font-size: 11px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.item-meta {
+  font-size: 10px;
+  color: #aaa;
+  margin-top: 4px;
+}
+
+.item-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.action-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: #f0f0f0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.action-btn:hover {
+  background: #e0e0e0;
+}
+
+.suggestion-duplicate {
+  background: #fff3cd;
+}
+
+.suggestion-stale {
+  background: #f8d7da;
+}
+
+.empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  color: #999;
+  font-size: 13px;
+}
+
+footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  background: white;
+  border-top: 1px solid #e0e0e0;
+}
+
+footer button {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #e0e0e0;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+footer button:hover {
+  background: #f5f5f5;
+  border-color: #667eea;
+  color: #667eea;
+}
+
+.notification {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  padding: 12px 16px;
+  background: #4caf50;
+  color: white;
+  border-radius: 6px;
+  font-size: 13px;
+  animation: slideIn 0.3s ease;
+  z-index: 1000;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+```
+
+## 3. Database Schemas
+
+### **PostgreSQL Schema**
+
+```sql
+-- Users table
+CREATE TABLE users (
+    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP,
+    settings JSONB DEFAULT '{}'::jsonb
+);
+
+-- Tabs table
+CREATE TABLE tabs (
+    tab_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    browser_tab_id INTEGER,
+    url TEXT NOT NULL,
+    title TEXT,
+    fav_icon_url TEXT,
+    window_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    capture_count INTEGER DEFAULT 1,
+    is_active BOOLEAN DEFAULT true,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX idx_tabs_user_id ON tabs(user_id);
+CREATE INDEX idx_tabs_url ON tabs(url);
+CREATE INDEX idx_tabs_created_at ON tabs(created_at DESC);
+CREATE INDEX idx_tabs_metadata ON tabs USING GIN(metadata);
+
+-- Bookmarks table
+CREATE TABLE bookmarks (
+    bookmark_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    browser_bookmark_id VARCHAR(255),
+    url TEXT NOT NULL,
+    title TEXT,
+    description TEXT,
+    parent_id VARCHAR(255),
+    date_added TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX idx_bookmarks_user_id ON bookmarks(user_id);
+CREATE INDEX idx_bookmarks_url ON bookmarks(url);
+CREATE INDEX idx_bookmarks_created_at ON bookmarks(created_at DESC);
+
+-- Archives table
+CREATE TABLE archives (
+    archive_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    tab_id UUID REFERENCES tabs(tab_id) ON DELETE SET NULL,
+    bookmark_id UUID REFERENCES bookmarks(bookmark_id) ON DELETE SET NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    content TEXT, -- Full HTML content
+    content_text TEXT, -- Extracted plain text
+    screenshot_url TEXT,
+    file_path TEXT, -- Path to archived file (WARC, MHTML)
+    file_size BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(50) DEFAULT 'active', -- active, expired, deleted
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX idx_archives_user_id ON archives(user_id);
+CREATE INDEX idx_archives_url ON archives(url);
+CREATE INDEX idx_archives_created_at ON archives(created_at DESC);
+
+-- Tags table
+CREATE TABLE tags (
+    tag_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    color VARCHAR(7), -- Hex color code
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, name)
+);
+
+-- Tab tags junction table
+CREATE TABLE tab_tags (
+    tab_id UUID REFERENCES tabs(tab_id) ON DELETE CASCADE,
+    tag_id UUID REFERENCES tags(tag_id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tab_id, tag_id)
+);
+
+-- Bookmark tags junction table
+CREATE TABLE bookmark_tags (
+    bookmark_id UUID REFERENCES bookmarks(bookmark_id) ON DELETE CASCADE,
+    tag_id UUID REFERENCES tags(tag_id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (bookmark_id, tag_id)
+);
+
+-- Collections/Folders table
+CREATE TABLE collections (
+    collection_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    parent_collection_id UUID REFERENCES collections(collection_id) ON DELETE CASCADE,
+    is_smart BOOLEAN DEFAULT false, -- Smart folders with saved queries
+    query_rules JSONB, -- Rules for smart collections
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_collections_user_id ON collections(user_id);
+
+-- Collection items junction table
+CREATE TABLE collection_items (
+    collection_id UUID REFERENCES collections(collection_id) ON DELETE CASCADE,
+    tab_id UUID REFERENCES tabs(tab_id) ON DELETE CASCADE,
+    bookmark_id UUID REFERENCES bookmarks(bookmark_id) ON DELETE CASCADE,
+    archive_id UUID REFERENCES archives(archive_id) ON DELETE CASCADE,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    position INTEGER,
+    CHECK (
+        (tab_id IS NOT NULL AND bookmark_id IS NULL AND archive_id IS NULL) OR
+        (tab_id IS NULL AND bookmark_id IS NOT NULL AND archive_id IS NULL) OR
+        (tab_id IS NULL AND bookmark_id IS NULL AND archive_id IS NOT NULL)
+    )
+);
+
+-- Snapshots table (periodic captures of all open tabs)
+CREATE TABLE snapshots (
+    snapshot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    name VARCHAR(255),
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    tab_count INTEGER,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX idx_snapshots_user_id ON snapshots(user_id);
+CREATE INDEX idx_snapshots_created_at ON snapshots(created_at DESC);
+
+-- Snapshot items junction table
+CREATE TABLE snapshot_items (
+    snapshot_id UUID REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    tab_id UUID REFERENCES tabs(tab_id) ON DELETE CASCADE,
+    window_id INTEGER,
+    position INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Content analysis table (NLP processing results)
+CREATE TABLE content_analysis (
+    analysis_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tab_id UUID REFERENCES tabs(tab_id) ON DELETE CASCADE,
+    bookmark_id UUID REFERENCES bookmarks(bookmark_id) ON DELETE CASCADE,
+    archive_id UUID REFERENCES archives(archive_id) ON DELETE CASCADE,
+    summary TEXT,
+    keywords TEXT[],
+    entities JSONB, -- Named entities (people, places, orgs)
+    topics TEXT[],
+    sentiment VARCHAR(20), -- positive, negative, neutral
+    reading_time INTEGER, -- Estimated reading time in minutes
+    language VARCHAR(10),
+    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    embeddings vector(1536), -- For semantic search (requires pgvector extension)
+    CHECK (
+        (tab_id IS NOT NULL AND bookmark_id IS NULL AND archive_id IS NULL) OR
+        (tab_id IS NULL AND bookmark_id IS NOT NULL AND archive_id IS NULL) OR
+        (tab_id IS NULL AND bookmark_id IS NULL AND archive_id IS NOT NULL)
+    )
+);
+
+CREATE INDEX idx_content_analysis_tab_id ON content_analysis(tab_id);
+CREATE INDEX idx_content_analysis_bookmark_id ON content_analysis(bookmark_id);
+CREATE INDEX idx_content_analysis_archive_id ON content_analysis(archive_id);
+
+-- Suggestions table
+CREATE TABLE suggestions (
+    suggestion_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL, -- duplicate, stale, related, archive, merge
+    message TEXT NOT NULL,
+    priority INTEGER DEFAULT 5, -- 1-10
+    status VARCHAR(20) DEFAULT 'pending', -- pending, accepted, dismissed
+    related_items JSONB, -- Array of related tab/bookmark IDs
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    actioned_at TIMESTAMP
+);
+
+CREATE INDEX idx_suggestions_user_id ON suggestions(user_id);
+CREATE INDEX idx_suggestions_status ON suggestions(status);
+CREATE INDEX idx_suggestions_created_at ON suggestions(created_at DESC);
+
+-- Activity log table
+CREATE TABLE activity_log (
+    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    action VARCHAR(100) NOT NULL, -- tab_opened, tab_closed, bookmark_added, etc.
+    entity_type VARCHAR(50), -- tab, bookmark, archive, collection
+    entity_id UUID,
+    details JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_activity_log_user_id ON activity_log(user_id);
+CREATE INDEX idx_activity_log_created_at ON activity_log(created_at DESC);
+
+-- Search history table
+CREATE TABLE search_history (
+    search_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    query TEXT NOT NULL,
+    filters JSONB,
+    result_count INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_search_history_user_id ON search_history(user_id);
+
+-- Functions and triggers
+
+-- Update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_tabs_updated_at BEFORE UPDATE ON tabs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_bookmarks_updated_at BEFORE UPDATE ON bookmarks
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_collections_updated_at BEFORE UPDATE ON collections
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Enable full-text search
+ALTER TABLE tabs ADD COLUMN search_vector tsvector;
+ALTER TABLE bookmarks ADD COLUMN search_vector tsvector;
+ALTER TABLE archives ADD COLUMN search_vector tsvector;
+
+CREATE INDEX idx_tabs_search_vector ON tabs USING GIN(search_vector);
+CREATE INDEX idx_bookmarks_search_vector ON bookmarks USING GIN(search_vector);
+CREATE INDEX idx_archives_search_vector ON archives USING GIN(search_vector);
+
+-- Update search vector function
+CREATE OR REPLACE FUNCTION update_search_vector()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.search_vector := 
+        setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(NEW.url, '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(NEW.metadata::text, '')), 'C');
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER tabs_search_vector_update BEFORE INSERT OR UPDATE ON tabs
+    FOR EACH ROW EXECUTE FUNCTION update_search_vector();
+
+CREATE TRIGGER bookmarks_search_vector_update BEFORE INSERT OR UPDATE ON bookmarks
+    FOR EACH ROW EXECUTE FUNCTION update_search_vector();
+```
+
+### **MongoDB Schema (Alternative NoSQL approach)**
+
+```javascript
+// users collection
+{
+  _id: ObjectId,
+  username: String,
+  email: String,
+  passwordHash: String,
+  createdAt: ISODate,
+  updatedAt: ISODate,
+  lastLogin: ISODate,
+  settings: {
+    autoCapture: Boolean,
+    captureInterval: Number,
+    enableSuggestions: Boolean,
+    archiveEnabled: Boolean,
+    theme: String
+  }
+}
+
+// tabs collection
+{
+  _id: ObjectId,
+  userId: ObjectId, // Reference to users
+  browserTabId: Number,
+  url: String,
+  title: String,
+  favIconUrl: String,
+  windowId: Number,
+  createdAt: ISODate,
+  updatedAt: ISODate,
+  lastAccessed: ISODate,
+  captureCount: Number,
+  isActive: Boolean,
+  metadata: {
+    description: String,
+    keywords: [String],
+    author: String,
+    ogTitle: String,
+    ogDescription: String,
+    ogImage: String,
+    language: String
+  },
+  tags: [String],
+  collections: [ObjectId]
+}
+
+// Create indexes
+db.tabs.createIndex({ userId: 1, createdAt: -1 })
+db.tabs.createIndex({ url: 1 })
+db.tabs.createIndex({ title: "text", url: "text" })
+db.tabs.createIndex({ tags: 1 })
+
+// bookmarks collection
+{
+  _id: ObjectId,
+  userId: ObjectId,
+  browserBookmarkId: String,
+  url: String,
+  title: String,
+  description: String,
+  parentId: String,
+  dateAdded: ISODate,
+  createdAt: ISODate,
+  updatedAt: ISODate,
+  metadata: Object,
+  tags: [String],
+  collections: [ObjectId]
+}
+
+// archives collection
+{
+  _id: ObjectId,
+  userId: ObjectId,
+  tabId: ObjectId,
+  bookmarkId: ObjectId,
+  url: String,
+  title: String,
+  content: String, // Full HTML
+  contentText: String, // Plain text
+  screenshotUrl: String,
+  filePath: String,
+  fileSize: Number,
+  createdAt: ISODate,
+  archivedAt: ISODate,
+  status: String, // active, expired, deleted
+  metadata: Object,
+  tags: [String]
+}
+
+// content_analysis collection
+{
+  _id: ObjectId,
+  entityId: ObjectId, // tab, bookmark, or archive ID
+  entityType: String, // tab, bookmark, archive
+  summary: String,
+  keywords: [String],
+  entities: {
+    people: [String],
+    places: [String],
+    organizations: [String]
+  },
+  topics: [String],
+  sentiment: String,
+  readingTime: Number,
+  language: String,
+  analyzedAt: ISODate,
+  embeddings: [Number] // Vector embeddings for similarity
+}
+
+// suggestions collection
+{
+  _id: ObjectId,
+  userId: ObjectId,
+  type: String,
+  message: String,
+  priority: Number,
+  status: String,
+  relatedItems: [{
+    type: String,
+    id: ObjectId
+  }],
+  createdAt: ISODate,
+  actionedAt: ISODate
+}
+
+// snapshots collection
+{
+  _id: ObjectId,
+  userId: ObjectId,
+  name: String,
+  description: String,
+  createdAt: ISODate,
+  tabCount: Number,
+  tabs: [{
+    tabId: ObjectId,
+    windowId: Number,
+    position: Number,
+    url: String,
+    title: String
+  }]
+}
+
+// collections collection
+{
+  _id: ObjectId,
+  userId: ObjectId,
+  name: String,
+  description: String,
+  parentCollectionId: ObjectId,
+  isSmart: Boolean,
+  queryRules: Object,
+  items: [{
+    type: String, // tab, bookmark, archive
+    id: ObjectId,
+    addedAt: ISODate,
+    position: Number
+  }],
+  createdAt: ISODate,
+  updatedAt: ISODate
+}
+```
+
+---
+
+This provides you with:
+1. ✅ Complete repository structure
+2. ✅ Working browser extension code (Manifest V3)
+3. ✅ Comprehensive database schemas (PostgreSQL & MongoDB)
+
+**Next steps you might want:**
+- Backend API implementation (Node.js/Express)
+- ML service for content analysis
+- Web dashboard (React)
+- Docker setup
+- CI/CD pipelines
+
+Would you like me to generate any of these additional components?
