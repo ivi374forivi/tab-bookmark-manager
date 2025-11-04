@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const { suggestionQueue } = require('../config/queue');
 const logger = require('../utils/logger');
 const { pool } = require('../config/database');
+const { cleanupRevokedTokens } = require('./tokenCleanup');
 
 class AutomationEngine {
   constructor() {
@@ -112,6 +113,14 @@ class AutomationEngine {
         } catch (error) {
           logger.error('Error checking duplicates:', error);
         }
+      })
+    );
+
+    // Clean up revoked tokens every day at midnight
+    this.jobs.push(
+      cron.schedule('0 0 * * *', async () => {
+        logger.info('Cleaning up revoked tokens');
+        await cleanupRevokedTokens();
       })
     );
 

@@ -9,9 +9,11 @@ const bookmarkRoutes = require('./routes/bookmarks');
 const searchRoutes = require('./routes/search');
 const suggestionsRoutes = require('./routes/suggestions');
 const archiveRoutes = require('./routes/archive');
+const authRoutes = require('./routes/auth');
 const { initializeDatabase } = require('./config/database');
 const { connectRedis } = require('./config/redis');
 const automationEngine = require('./services/automationEngine');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,12 +24,22 @@ app.use(cors());
 app.use(express.json());
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
 
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(limiter);
+
 // Routes
 app.use('/api/tabs', tabRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/suggestions', suggestionsRoutes);
 app.use('/api/archive', archiveRoutes);
+app.use('/api/auth', authRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

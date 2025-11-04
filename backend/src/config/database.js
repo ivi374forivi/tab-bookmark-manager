@@ -81,6 +81,26 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_tabs_category ON tabs(category);
       CREATE INDEX IF NOT EXISTS idx_bookmarks_category ON bookmarks(category);
       CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(status);
+
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS revoked_tokens (
+        id SERIAL PRIMARY KEY,
+        token VARCHAR(500) NOT NULL,
+        revoked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL
+      );
+
+      ALTER TABLE tabs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
+      ALTER TABLE bookmarks ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
+      ALTER TABLE suggestions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
+      ALTER TABLE archived_pages ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
     `);
     logger.info('Database schema initialized successfully');
   } catch (err) {

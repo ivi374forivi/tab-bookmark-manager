@@ -5,10 +5,11 @@ const logger = require('../utils/logger');
 exports.createBookmark = async (req, res) => {
   try {
     const { url, title, favicon, folder, content } = req.body;
+    const userId = req.user.id;
     
     const result = await pool.query(
-      'INSERT INTO bookmarks (url, title, favicon, folder, content) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [url, title, favicon, folder, content]
+      'INSERT INTO bookmarks (url, title, favicon, folder, content, user_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [url, title, favicon, folder, content, userId]
     );
     
     const bookmark = result.rows[0];
@@ -33,12 +34,13 @@ exports.createBookmark = async (req, res) => {
 exports.getAllBookmarks = async (req, res) => {
   try {
     const { limit = 100, offset = 0, folder, archived = false } = req.query;
+    const userId = req.user.id;
     
-    let query = 'SELECT * FROM bookmarks WHERE is_archived = $1';
-    const params = [archived];
+    let query = 'SELECT * FROM bookmarks WHERE is_archived = $1 AND user_id = $2';
+    const params = [archived, userId];
     
     if (folder) {
-      query += ' AND folder = $2';
+      query += ' AND folder = $3';
       params.push(folder);
     }
     
@@ -57,8 +59,9 @@ exports.getAllBookmarks = async (req, res) => {
 exports.getBookmarkById = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     
-    const result = await pool.query('SELECT * FROM bookmarks WHERE id = $1', [id]);
+    const result = await pool.query('SELECT * FROM bookmarks WHERE id = $1 AND user_id = $2', [id, userId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Bookmark not found' });
@@ -75,10 +78,11 @@ exports.updateBookmark = async (req, res) => {
   try {
     const { id } = req.params;
     const { title, folder, content, tags, category } = req.body;
+    const userId = req.user.id;
     
     const result = await pool.query(
-      'UPDATE bookmarks SET title = COALESCE($1, title), folder = COALESCE($2, folder), content = COALESCE($3, content), tags = COALESCE($4, tags), category = COALESCE($5, category), updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *',
-      [title, folder, content, tags, category, id]
+      'UPDATE bookmarks SET title = COALESCE($1, title), folder = COALESCE($2, folder), content = COALESCE($3, content), tags = COALESCE($4, tags), category = COALESCE($5, category), updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND user_id = $7 RETURNING *',
+      [title, folder, content, tags, category, id, userId]
     );
     
     if (result.rows.length === 0) {
@@ -95,8 +99,9 @@ exports.updateBookmark = async (req, res) => {
 exports.deleteBookmark = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     
-    const result = await pool.query('DELETE FROM bookmarks WHERE id = $1 RETURNING *', [id]);
+    const result = await pool.query('DELETE FROM bookmarks WHERE id = $1 AND user_id = $2 RETURNING *', [id, userId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Bookmark not found' });
@@ -113,8 +118,9 @@ exports.archiveBookmark = async (req, res) => {
   try {
     const { id } = req.params;
     const { archivalQueue } = require('../config/queue');
+    const userId = req.user.id;
     
-    const result = await pool.query('SELECT * FROM bookmarks WHERE id = $1', [id]);
+    const result = await pool.query('SELECT * FROM bookmarks WHERE id = $1 AND user_id = $2', [id, userId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Bookmark not found' });
