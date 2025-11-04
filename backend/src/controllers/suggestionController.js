@@ -5,10 +5,11 @@ const logger = require('../utils/logger');
 exports.getAllSuggestions = async (req, res) => {
   try {
     const { status = 'pending', limit = 50 } = req.query;
+    const userId = req.user.id;
     
     const result = await pool.query(
-      'SELECT * FROM suggestions WHERE status = $1 ORDER BY created_at DESC LIMIT $2',
-      [status, limit]
+      'SELECT * FROM suggestions WHERE status = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT $3',
+      [status, userId, limit]
     );
     
     res.json(result.rows);
@@ -20,9 +21,10 @@ exports.getAllSuggestions = async (req, res) => {
 
 exports.getDuplicates = async (req, res) => {
   try {
+    const userId = req.user.id;
     const result = await pool.query(
-      'SELECT * FROM suggestions WHERE type = $1 AND status = $2 ORDER BY confidence DESC',
-      ['duplicate', 'pending']
+      'SELECT * FROM suggestions WHERE type = $1 AND status = $2 AND user_id = $3 ORDER BY confidence DESC',
+      ['duplicate', 'pending', userId]
     );
     
     res.json(result.rows);
@@ -34,9 +36,10 @@ exports.getDuplicates = async (req, res) => {
 
 exports.getStaleTabs = async (req, res) => {
   try {
+    const userId = req.user.id;
     const result = await pool.query(
-      'SELECT * FROM suggestions WHERE type = $1 AND status = $2 ORDER BY created_at DESC',
-      ['stale', 'pending']
+      'SELECT * FROM suggestions WHERE type = $1 AND status = $2 AND user_id = $3 ORDER BY created_at DESC',
+      ['stale', 'pending', userId]
     );
     
     res.json(result.rows);
@@ -49,10 +52,11 @@ exports.getStaleTabs = async (req, res) => {
 exports.getRelatedContent = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     
     const result = await pool.query(
-      'SELECT * FROM suggestions WHERE type = $1 AND $2 = ANY(item_ids) AND status = $3 ORDER BY confidence DESC',
-      ['related', parseInt(id), 'pending']
+      'SELECT * FROM suggestions WHERE type = $1 AND $2 = ANY(item_ids) AND status = $3 AND user_id = $4 ORDER BY confidence DESC',
+      ['related', parseInt(id), 'pending', userId]
     );
     
     res.json(result.rows);
@@ -64,8 +68,9 @@ exports.getRelatedContent = async (req, res) => {
 
 exports.generateSuggestions = async (req, res) => {
   try {
+    const userId = req.user.id;
     // Queue suggestion generation job
-    const job = await suggestionQueue.add({});
+    const job = await suggestionQueue.add({ userId });
     
     res.json({ message: 'Suggestion generation queued', jobId: job.id });
   } catch (error) {
@@ -77,10 +82,11 @@ exports.generateSuggestions = async (req, res) => {
 exports.acceptSuggestion = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     
     const result = await pool.query(
-      'UPDATE suggestions SET status = $1 WHERE id = $2 RETURNING *',
-      ['accepted', id]
+      'UPDATE suggestions SET status = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+      ['accepted', id, userId]
     );
     
     if (result.rows.length === 0) {
@@ -97,10 +103,11 @@ exports.acceptSuggestion = async (req, res) => {
 exports.rejectSuggestion = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     
     const result = await pool.query(
-      'UPDATE suggestions SET status = $1 WHERE id = $2 RETURNING *',
-      ['rejected', id]
+      'UPDATE suggestions SET status = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+      ['rejected', id, userId]
     );
     
     if (result.rows.length === 0) {

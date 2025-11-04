@@ -5,9 +5,10 @@ const logger = require('../utils/logger');
 exports.archivePage = async (req, res) => {
   try {
     const { url } = req.body;
+    const userId = req.user.id;
     
     // Queue archival job
-    const job = await archivalQueue.add({ url });
+    const job = await archivalQueue.add({ url, userId });
     
     res.json({ message: 'Page queued for archival', jobId: job.id });
   } catch (error) {
@@ -19,10 +20,11 @@ exports.archivePage = async (req, res) => {
 exports.getArchive = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     
     const result = await pool.query(
-      'SELECT * FROM archived_pages WHERE id = $1',
-      [id]
+      'SELECT * FROM archived_pages WHERE id = $1 AND user_id = $2',
+      [id, userId]
     );
     
     if (result.rows.length === 0) {
@@ -39,10 +41,11 @@ exports.getArchive = async (req, res) => {
 exports.getAllArchives = async (req, res) => {
   try {
     const { limit = 50, offset = 0 } = req.query;
+    const userId = req.user.id;
     
     const result = await pool.query(
-      'SELECT * FROM archived_pages ORDER BY created_at DESC LIMIT $1 OFFSET $2',
-      [limit, offset]
+      'SELECT * FROM archived_pages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+      [userId, limit, offset]
     );
     
     res.json(result.rows);
