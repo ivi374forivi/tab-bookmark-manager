@@ -1,4 +1,4 @@
-const { pool } = require('../config/database');
+const db = require('../config/db');
 const { archivalQueue } = require('../config/queue');
 const logger = require('../utils/logger');
 
@@ -22,7 +22,7 @@ exports.getArchive = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    const result = await pool.query(
+    const result = await db.query(
       'SELECT * FROM archived_pages WHERE id = $1 AND user_id = $2',
       [id, userId]
     );
@@ -43,7 +43,7 @@ exports.getAllArchives = async (req, res) => {
     const { limit = 50, offset = 0 } = req.query;
     const userId = req.user.id;
     
-    const result = await pool.query(
+    const result = await db.query(
       'SELECT * FROM archived_pages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
       [userId, limit, offset]
     );

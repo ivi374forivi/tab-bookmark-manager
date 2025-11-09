@@ -70,9 +70,10 @@ async function startServer() {
     logger.info('Automation engine started');
 
     // Start HTTP server
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       logger.info(`Backend API server running on port ${PORT}`);
     });
+    return server;
   } catch (error) {
     logger.error('Failed to start server:', error);
     process.exit(1);
@@ -88,4 +89,4 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-module.exports = app;
+module.exports = { app, startServer };

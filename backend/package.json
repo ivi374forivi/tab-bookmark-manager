@@ -7,6 +7,7 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "test": "jest --coverage",
+    "test:auth": "NODE_ENV=test JWT_SECRET=testsecret jest --forceExit --detectOpenHandles src/__tests__/auth.test.js",
     "lint": "eslint src/**/*.js"
   },
   "keywords": ["bookmarks", "tabs", "api", "ml"],
@@ -27,12 +28,15 @@
     "puppeteer": "^21.5.0",
     "node-cron": "^3.0.3",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "express-rate-limit": "^7.1.5"
   },
   "devDependencies": {
     "jest": "^29.7.0",
     "nodemon": "^3.0.1",
     "eslint": "^8.54.0",
-    "supertest": "^6.3.3"
+    "supertest": "^6.3.3",
+    "sqlite3": "^5.1.6",
+    "ioredis-mock": "^8.2.2"
   }
 }

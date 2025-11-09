@@ -1,4 +1,4 @@
-const { pool } = require('../config/database');
+const db = require('../config/db');
 const { contentAnalysisQueue } = require('../config/queue');
 const logger = require('../utils/logger');
 
@@ -7,7 +7,7 @@ exports.createBookmark = async (req, res) => {
     const { url, title, favicon, folder, content } = req.body;
     const userId = req.user.id;
     
-    const result = await pool.query(
+    const result = await db.query(
       'INSERT INTO bookmarks (url, title, favicon, folder, content, user_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
       [url, title, favicon, folder, content, userId]
     );
@@ -47,7 +47,7 @@ exports.getAllBookmarks = async (req, res) => {
     query += ' ORDER BY created_at DESC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
     params.push(limit, offset);
     
-    const result = await pool.query(query, params);
+    const result = await db.query(query, params);
     
     res.json(result.rows);
   } catch (error) {
@@ -61,7 +61,7 @@ exports.getBookmarkById = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    const result = await pool.query('SELECT * FROM bookmarks WHERE id = $1 AND user_id = $2', [id, userId]);
+    const result = await db.query('SELECT * FROM bookmarks WHERE id = $1 AND user_id = $2', [id, userId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Bookmark not found' });
@@ -80,16 +80,18 @@ exports.updateBookmark = async (req, res) => {
     const { title, folder, content, tags, category } = req.body;
     const userId = req.user.id;
     
-    const result = await pool.query(
-      'UPDATE bookmarks SET title = COALESCE($1, title), folder = COALESCE($2, folder), content = COALESCE($3, content), tags = COALESCE($4, tags), category = COALESCE($5, category), updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND user_id = $7 RETURNING *',
+    await db.run(
+      'UPDATE bookmarks SET title = COALESCE($1, title), folder = COALESCE($2, folder), content = COALESCE($3, content), tags = COALESCE($4, tags), category = COALESCE($5, category), updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND user_id = $7',
       [title, folder, content, tags, category, id, userId]
     );
     
-    if (result.rows.length === 0) {
+    const bookmark = await db.get('SELECT * FROM bookmarks WHERE id = $1 AND user_id = $2', [id, userId]);
+
+    if (!bookmark) {
       return res.status(404).json({ error: 'Bookmark not found' });
     }
     
-    res.json(result.rows[0]);
+    res.json(bookmark);
   } catch (error) {
     logger.error('Error updating bookmark:', error);
     res.status(500).json({ error: 'Failed to update bookmark' });
@@ -101,9 +103,9 @@ exports.deleteBookmark = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    const result = await pool.query('DELETE FROM bookmarks WHERE id = $1 AND user_id = $2 RETURNING *', [id, userId]);
+    const result = await db.run('DELETE FROM bookmarks WHERE id = $1 AND user_id = $2', [id, userId]);
     
-    if (result.rows.length === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Bookmark not found' });
     }
     
@@ -120,7 +122,7 @@ exports.archiveBookmark = async (req, res) => {
     const { archivalQueue } = require('../config/queue');
     const userId = req.user.id;
     
-    const result = await pool.query('SELECT * FROM bookmarks WHERE id = $1 AND user_id = $2', [id, userId]);
+    const result = await db.query('SELECT * FROM bookmarks WHERE id = $1 AND user_id = $2', [id, userId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Bookmark not found' });
@@ -132,7 +134,7 @@ exports.archiveBookmark = async (req, res) => {
     await archivalQueue.add({ url: bookmark.url, itemId: id, itemType: 'bookmark' });
     
     // Mark as archived
-    await pool.query('UPDATE bookmarks SET is_archived = TRUE WHERE id = $1', [id]);
+    await db.run('UPDATE bookmarks SET is_archived = TRUE WHERE id = $1', [id]);
     
     res.json({ message: 'Bookmark queued for archival' });
   } catch (error) {

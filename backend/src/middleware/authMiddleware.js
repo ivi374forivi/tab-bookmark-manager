@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { pool } = require('../config/database');
+const db = require('../config/db');
 const logger = require('../utils/logger');
 
 if (!process.env.JWT_SECRET) {
@@ -18,7 +18,7 @@ const authMiddleware = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    const revokedResult = await pool.query('SELECT 1 FROM revoked_tokens WHERE token = $1', [token]);
+    const revokedResult = await db.query('SELECT 1 FROM revoked_tokens WHERE token = $1', [token]);
     if (revokedResult.rows.length > 0) {
       return res.status(401).json({ message: 'Token has been revoked' });
     }

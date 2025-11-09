@@ -1,12 +1,26 @@
 const Queue = require('bull');
 const logger = require('../utils/logger');
+const { redisClient } = require('./redis');
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+let contentAnalysisQueue, archivalQueue, suggestionQueue;
 
-// Create queues for different processing tasks
-const contentAnalysisQueue = new Queue('content-analysis', REDIS_URL);
-const archivalQueue = new Queue('archival', REDIS_URL);
-const suggestionQueue = new Queue('suggestion', REDIS_URL);
+if (process.env.NODE_ENV === 'test') {
+  contentAnalysisQueue = { add: jest.fn(), process: jest.fn(), on: jest.fn(), close: jest.fn() };
+  archivalQueue = { add: jest.fn(), process: jest.fn(), on: jest.fn(), close: jest.fn() };
+  suggestionQueue = { add: jest.fn(), process: jest.fn(), on: jest.fn(), close: jest.fn() };
+} else {
+  // Create queues for different processing tasks
+  contentAnalysisQueue = new Queue('content-analysis', {
+    createClient: () => redisClient,
+  });
+  archivalQueue = new Queue('archival', {
+    createClient: () => redisClient,
+  });
+  suggestionQueue = new Queue('suggestion', {
+    createClient: () => redisClient,
+  });
+}
+
 
 // Content analysis job processor
 contentAnalysisQueue.process(async (job) => {

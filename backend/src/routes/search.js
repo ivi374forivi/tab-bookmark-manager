@@ -4,7 +4,7 @@ const searchController = require('../controllers/searchController');
 const authMiddleware = require('../middleware/authMiddleware');
 
 router.post('/semantic', authMiddleware, searchController.semanticSearch);
-router.get('/text', searchController.textSearch);
-router.get('/similar/:id', searchController.findSimilar);
+router.get('/text', authMiddleware, searchController.textSearch);
+router.get('/similar/:id', authMiddleware, searchController.findSimilar);
 
 module.exports = router;

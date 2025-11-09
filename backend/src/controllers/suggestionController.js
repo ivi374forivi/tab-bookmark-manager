@@ -1,4 +1,4 @@
-const { pool } = require('../config/database');
+const db = require('../config/db');
 const { suggestionQueue } = require('../config/queue');
 const logger = require('../utils/logger');
 
@@ -7,7 +7,7 @@ exports.getAllSuggestions = async (req, res) => {
     const { status = 'pending', limit = 50 } = req.query;
     const userId = req.user.id;
     
-    const result = await pool.query(
+    const result = await db.query(
       'SELECT * FROM suggestions WHERE status = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT $3',
       [status, userId, limit]
     );
@@ -22,7 +22,7 @@ exports.getAllSuggestions = async (req, res) => {
 exports.getDuplicates = async (req, res) => {
   try {
     const userId = req.user.id;
-    const result = await pool.query(
+    const result = await db.query(
       'SELECT * FROM suggestions WHERE type = $1 AND status = $2 AND user_id = $3 ORDER BY confidence DESC',
       ['duplicate', 'pending', userId]
     );
@@ -37,7 +37,7 @@ exports.getDuplicates = async (req, res) => {
 exports.getStaleTabs = async (req, res) => {
   try {
     const userId = req.user.id;
-    const result = await pool.query(
+    const result = await db.query(
       'SELECT * FROM suggestions WHERE type = $1 AND status = $2 AND user_id = $3 ORDER BY created_at DESC',
       ['stale', 'pending', userId]
     );
@@ -54,7 +54,7 @@ exports.getRelatedContent = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    const result = await pool.query(
+    const result = await db.query(
       'SELECT * FROM suggestions WHERE type = $1 AND $2 = ANY(item_ids) AND status = $3 AND user_id = $4 ORDER BY confidence DESC',
       ['related', parseInt(id), 'pending', userId]
     );
@@ -84,16 +84,18 @@ exports.acceptSuggestion = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    const result = await pool.query(
-      'UPDATE suggestions SET status = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+    await db.run(
+      'UPDATE suggestions SET status = $1 WHERE id = $2 AND user_id = $3',
       ['accepted', id, userId]
     );
     
-    if (result.rows.length === 0) {
+    const suggestion = await db.get('SELECT * FROM suggestions WHERE id = $1 AND user_id = $2', [id, userId]);
+
+    if (!suggestion) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
     
-    res.json(result.rows[0]);
+    res.json(suggestion);
   } catch (error) {
     logger.error('Error accepting suggestion:', error);
     res.status(500).json({ error: 'Failed to accept suggestion' });
@@ -105,16 +107,18 @@ exports.rejectSuggestion = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    const result = await pool.query(
-      'UPDATE suggestions SET status = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+    await db.run(
+      'UPDATE suggestions SET status = $1 WHERE id = $2 AND user_id = $3',
       ['rejected', id, userId]
     );
     
-    if (result.rows.length === 0) {
+    const suggestion = await db.get('SELECT * FROM suggestions WHERE id = $1 AND user_id = $2', [id, userId]);
+
+    if (!suggestion) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
     
-    res.json(result.rows[0]);
+    res.json(suggestion);
   } catch (error) {
     logger.error('Error rejecting suggestion:', error);
     res.status(500).json({ error: 'Failed to reject suggestion' });

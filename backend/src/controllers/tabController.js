@@ -1,4 +1,4 @@
-const { pool } = require('../config/database');
+const db = require('../config/db');
 const { contentAnalysisQueue } = require('../config/queue');
 const logger = require('../utils/logger');
 
@@ -7,7 +7,7 @@ exports.createTab = async (req, res) => {
     const { url, title, favicon, content } = req.body;
     const userId = req.user.id;
     
-    const result = await pool.query(
+    const result = await db.query(
       'INSERT INTO tabs (url, title, favicon, content, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [url, title, favicon, content, userId]
     );
@@ -36,7 +36,7 @@ exports.getAllTabs = async (req, res) => {
     const { limit = 100, offset = 0, archived = false } = req.query;
     const userId = req.user.id;
     
-    const result = await pool.query(
+    const result = await db.query(
       'SELECT * FROM tabs WHERE is_archived = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4',
       [archived, userId, limit, offset]
     );
@@ -53,16 +53,18 @@ exports.getTabById = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    const result = await pool.query(
-      'UPDATE tabs SET access_count = access_count + 1, last_accessed = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2 RETURNING *',
+    await db.run(
+      'UPDATE tabs SET access_count = access_count + 1, last_accessed = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2',
       [id, userId]
     );
     
-    if (result.rows.length === 0) {
+    const tab = await db.get('SELECT * FROM tabs WHERE id = $1 AND user_id = $2', [id, userId]);
+
+    if (!tab) {
       return res.status(404).json({ error: 'Tab not found' });
     }
     
-    res.json(result.rows[0]);
+    res.json(tab);
   } catch (error) {
     logger.error('Error fetching tab:', error);
     res.status(500).json({ error: 'Failed to fetch tab' });
@@ -75,16 +77,18 @@ exports.updateTab = async (req, res) => {
     const { title, content, tags, category } = req.body;
     const userId = req.user.id;
     
-    const result = await pool.query(
-      'UPDATE tabs SET title = COALESCE($1, title), content = COALESCE($2, content), tags = COALESCE($3, tags), category = COALESCE($4, category), updated_at = CURRENT_TIMESTAMP WHERE id = $5 AND user_id = $6 RETURNING *',
+    await db.run(
+      'UPDATE tabs SET title = COALESCE($1, title), content = COALESCE($2, content), tags = COALESCE($3, tags), category = COALESCE($4, category), updated_at = CURRENT_TIMESTAMP WHERE id = $5 AND user_id = $6',
       [title, content, tags, category, id, userId]
     );
     
-    if (result.rows.length === 0) {
+    const tab = await db.get('SELECT * FROM tabs WHERE id = $1 AND user_id = $2', [id, userId]);
+
+    if (!tab) {
       return res.status(404).json({ error: 'Tab not found' });
     }
     
-    res.json(result.rows[0]);
+    res.json(tab);
   } catch (error) {
     logger.error('Error updating tab:', error);
     res.status(500).json({ error: 'Failed to update tab' });
@@ -96,9 +100,9 @@ exports.deleteTab = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    const result = await pool.query('DELETE FROM tabs WHERE id = $1 AND user_id = $2 RETURNING *', [id, userId]);
+    const result = await db.run('DELETE FROM tabs WHERE id = $1 AND user_id = $2', [id, userId]);
     
-    if (result.rows.length === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Tab not found' });
     }
     
@@ -115,7 +119,7 @@ exports.archiveTab = async (req, res) => {
     const { archivalQueue } = require('../config/queue');
     const userId = req.user.id;
     
-    const result = await pool.query('SELECT * FROM tabs WHERE id = $1 AND user_id = $2', [id, userId]);
+    const result = await db.query('SELECT * FROM tabs WHERE id = $1 AND user_id = $2', [id, userId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Tab not found' });
@@ -127,7 +131,7 @@ exports.archiveTab = async (req, res) => {
     await archivalQueue.add({ url: tab.url, itemId: id, itemType: 'tab' });
     
     // Mark as archived
-    await pool.query('UPDATE tabs SET is_archived = TRUE WHERE id = $1', [id]);
+    await db.run('UPDATE tabs SET is_archived = TRUE WHERE id = $1', [id]);
     
     res.json({ message: 'Tab queued for archival' });
   } catch (error) {
@@ -141,8 +145,8 @@ exports.detectStaleTabs = async (req, res) => {
     const { days = 30 } = req.query;
     const userId = req.user.id;
     
-    const result = await pool.query(
-      'SELECT * FROM tabs WHERE (last_accessed < NOW() - INTERVAL \'$1 days\' OR (last_accessed IS NULL AND created_at < NOW() - INTERVAL \'$1 days\')) AND user_id = $2 ORDER BY last_accessed ASC',
+    const result = await db.query(
+      `SELECT * FROM tabs WHERE (last_accessed < ${process.env.NODE_ENV === 'test' ? `strftime('%Y-%m-%d %H:%M:%f', 'now', '-' || ? || ' days')` : `NOW() - INTERVAL '$1 days'`} OR (last_accessed IS NULL AND created_at < ${process.env.NODE_ENV === 'test' ? `strftime('%Y-%m-%d %H:%M:%f', 'now', '-' || ? || ' days')` : `NOW() - INTERVAL '$1 days'`})) AND user_id = $2 ORDER BY last_accessed ASC`,
       [days, userId]
     );
     

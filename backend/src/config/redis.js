@@ -1,22 +1,28 @@
-const redis = require('redis');
+const Redis = require('ioredis');
+const RedisMock = require('ioredis-mock');
 const logger = require('../utils/logger');
 
-const redisClient = redis.createClient({
-  host: process.env.REDIS_HOST || 'localhost',
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASSWORD || undefined,
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+
+let redisClient;
+
+if (process.env.NODE_ENV === 'test') {
+  redisClient = new RedisMock();
+} else {
+  redisClient = new Redis(REDIS_URL);
+}
+
+redisClient.on('connect', () => {
+  logger.info('Connected to Redis');
 });
 
 redisClient.on('error', (err) => {
-  logger.error('Redis Client Error:', err);
-});
-
-redisClient.on('connect', () => {
-  logger.info('Connected to Redis successfully');
+  logger.error('Redis connection error:', err);
 });
 
 async function connectRedis() {
-  await redisClient.connect();
+  // Connection is handled by ioredis automatically
+  return redisClient;
 }
 
-module.exports = { redisClient, connectRedis };
+module.exports = { redisClient, connectRedis, REDIS_URL };

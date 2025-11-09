@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const { suggestionQueue } = require('../config/queue');
 const logger = require('../utils/logger');
-const { pool } = require('../config/database');
+const db = require('../config/db');
 const { cleanupRevokedTokens } = require('./tokenCleanup');
 
 class AutomationEngine {
@@ -30,8 +30,8 @@ class AutomationEngine {
       cron.schedule('0 2 * * *', async () => {
         logger.info('Cleaning up old rejected suggestions');
         try {
-          const result = await pool.query(
-            "DELETE FROM suggestions WHERE status = 'rejected' AND created_at < NOW() - INTERVAL '30 days'"
+          const result = await db.run(
+            `DELETE FROM suggestions WHERE status = 'rejected' AND created_at < ${process.env.NODE_ENV === 'test' ? "strftime('%Y-%m-%d %H:%M:%f', 'now', '-30 days')" : "NOW() - INTERVAL '30 days'"}`
           );
           logger.info(`Deleted ${result.rowCount} old suggestions`);
         } catch (error) {
@@ -46,21 +46,26 @@ class AutomationEngine {
         logger.info('Archiving old tabs');
         try {
           const { archivalQueue } = require('../config/queue');
+          const users = await db.query('SELECT id FROM users');
           
-          // Get tabs older than 90 days that are not archived
-          const result = await pool.query(
-            "SELECT id, url FROM tabs WHERE is_archived = FALSE AND created_at < NOW() - INTERVAL '90 days' LIMIT 100"
-          );
+          for (const user of users.rows) {
+            // Get tabs older than 90 days that are not archived
+            const result = await db.query(
+              `SELECT id, url FROM tabs WHERE is_archived = FALSE AND user_id = $1 AND created_at < ${process.env.NODE_ENV === 'test' ? "strftime('%Y-%m-%d %H:%M:%f', 'now', '-90 days')" : "NOW() - INTERVAL '90 days'"} LIMIT 100`,
+              [user.id]
+            );
 
-          for (const tab of result.rows) {
-            await archivalQueue.add({
-              url: tab.url,
-              itemId: tab.id,
-              itemType: 'tab'
-            });
+            for (const tab of result.rows) {
+              await archivalQueue.add({
+                url: tab.url,
+                itemId: tab.id,
+                itemType: 'tab',
+                userId: user.id,
+              });
+            }
+
+            logger.info(`Queued ${result.rows.length} tabs for archival for user ${user.id}`);
           }
-
-          logger.info(`Queued ${result.rows.length} tabs for archival`);
         } catch (error) {
           logger.error('Error archiving old tabs:', error);
         }
@@ -73,7 +78,7 @@ class AutomationEngine {
         logger.info('Updating access statistics');
         try {
           // Calculate average access counts, popular categories, etc.
-          const stats = await pool.query(`
+          const stats = await db.query(`
             SELECT 
               COUNT(*) as total_tabs,
               AVG(access_count) as avg_access_count,
@@ -93,22 +98,25 @@ class AutomationEngine {
       cron.schedule('0 */12 * * *', async () => {
         logger.info('Checking for duplicate tabs');
         try {
-          const duplicates = await pool.query(`
-            SELECT url, array_agg(id) as ids, COUNT(*) as count
-            FROM tabs
-            WHERE is_archived = FALSE
-            GROUP BY url
-            HAVING COUNT(*) > 1
-          `);
+          const users = await db.query('SELECT id FROM users');
+          for (const user of users.rows) {
+            const duplicates = await db.query(`
+              SELECT url, ${process.env.NODE_ENV === 'test' ? 'GROUP_CONCAT(id)' : 'array_agg(id)'} as ids, COUNT(*) as count
+              FROM tabs
+              WHERE is_archived = FALSE AND user_id = $1
+              GROUP BY url
+              HAVING COUNT(*) > 1
+            `, [user.id]);
 
-          logger.info(`Found ${duplicates.rows.length} duplicate URL groups`);
+            logger.info(`Found ${duplicates.rows.length} duplicate URL groups for user ${user.id}`);
 
-          // Create suggestions for duplicates
-          for (const dup of duplicates.rows) {
-            await pool.query(
-              'INSERT INTO suggestions (type, item_ids, reason, confidence) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
-              ['duplicate', dup.ids, `${dup.count} tabs with URL: ${dup.url}`, 0.95]
-            );
+            // Create suggestions for duplicates
+            for (const dup of duplicates.rows) {
+              await db.run(
+                'INSERT INTO suggestions (type, item_ids, reason, confidence, user_id) VALUES ($1, $2, $3, $4, $5)',
+                ['duplicate', dup.ids, `${dup.count} tabs with URL: ${dup.url}`, 0.95, user.id]
+              );
+            }
           }
         } catch (error) {
           logger.error('Error checking duplicates:', error);

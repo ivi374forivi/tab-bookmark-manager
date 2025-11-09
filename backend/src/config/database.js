@@ -1,16 +1,23 @@
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
+const sqlite3 = require('sqlite3');
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'tab_bookmark_manager',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
+let pool;
+
+if (process.env.NODE_ENV === 'test') {
+  pool = new sqlite3.Database(':memory:');
+} else {
+  pool = new Pool({
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'tab_bookmark_manager',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'postgres',
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  });
+}
 
 pool.on('error', (err) => {
   logger.error('Unexpected error on idle PostgreSQL client', err);
@@ -19,6 +26,9 @@ pool.on('error', (err) => {
 
 // Initialize database schema
 async function initializeDatabase() {
+  if (process.env.NODE_ENV === 'test') {
+    return initializeTestDatabase();
+  }
   const client = await pool.connect();
   try {
     await client.query(`
@@ -109,6 +119,108 @@ async function initializeDatabase() {
   } finally {
     client.release();
   }
+}
+
+async function initializeTestDatabase() {
+  return new Promise((resolve, reject) => {
+    pool.serialize(() => {
+      pool.run(`
+        CREATE TABLE tabs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          url TEXT NOT NULL,
+          title TEXT,
+          favicon TEXT,
+          content TEXT,
+          summary TEXT,
+          category TEXT,
+          tags TEXT,
+          entities TEXT,
+          embedding BLOB,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_accessed DATETIME,
+          access_count INTEGER DEFAULT 0,
+          is_archived BOOLEAN DEFAULT FALSE,
+          user_id INTEGER,
+          FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+      `);
+
+      pool.run(`
+        CREATE TABLE bookmarks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          url TEXT NOT NULL,
+          title TEXT,
+          favicon TEXT,
+          folder TEXT,
+          content TEXT,
+          summary TEXT,
+          category TEXT,
+          tags TEXT,
+          entities TEXT,
+          embedding BLOB,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          is_archived BOOLEAN DEFAULT FALSE,
+          user_id INTEGER,
+          FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+      `);
+
+      pool.run(`
+        CREATE TABLE archived_pages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          url TEXT NOT NULL,
+          html_content TEXT,
+          screenshot_path TEXT,
+          pdf_path TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          user_id INTEGER,
+          FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+      `);
+
+      pool.run(`
+        CREATE TABLE suggestions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type TEXT NOT NULL,
+          item_ids TEXT,
+          reason TEXT,
+          confidence REAL,
+          status TEXT DEFAULT 'pending',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          user_id INTEGER,
+          FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+      `);
+
+      pool.run(`
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          email TEXT UNIQUE NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      pool.run(`
+        CREATE TABLE revoked_tokens (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          token TEXT NOT NULL,
+          revoked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          expires_at DATETIME NOT NULL
+        );
+      `, (err) => {
+        if (err) {
+          logger.error('Error initializing test database schema:', err);
+          return reject(err);
+        }
+        logger.info('Test database schema initialized successfully');
+        resolve();
+      });
+    });
+  });
 }
 
 module.exports = { pool, initializeDatabase };

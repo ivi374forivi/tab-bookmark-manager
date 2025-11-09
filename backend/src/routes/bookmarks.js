@@ -4,8 +4,8 @@ const bookmarkController = require('../controllers/bookmarkController');
 const authMiddleware = require('../middleware/authMiddleware');
 
 router.post('/', authMiddleware, bookmarkController.createBookmark);
-router.get('/', bookmarkController.getAllBookmarks);
-router.get('/:id', bookmarkController.getBookmarkById);
+router.get('/', authMiddleware, bookmarkController.getAllBookmarks);
+router.get('/:id', authMiddleware, bookmarkController.getBookmarkById);
 router.put('/:id', authMiddleware, bookmarkController.updateBookmark);
 router.delete('/:id', authMiddleware, bookmarkController.deleteBookmark);
 router.post('/:id/archive', authMiddleware, bookmarkController.archiveBookmark);
