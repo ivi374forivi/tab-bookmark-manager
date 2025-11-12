@@ -4,6 +4,7 @@ const tabController = require('../controllers/tabController');
 const authMiddleware = require('../middleware/authMiddleware');
 
 router.post('/', authMiddleware, tabController.createTab);
+router.post('/bulk', authMiddleware, tabController.bulkCreateTabs);
 router.get('/', authMiddleware, tabController.getAllTabs);
 router.get('/:id', authMiddleware, tabController.getTabById);
 router.put('/:id', authMiddleware, tabController.updateTab);

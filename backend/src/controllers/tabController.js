@@ -156,3 +156,18 @@ exports.detectStaleTabs = async (req, res) => {
     res.status(500).json({ error: 'Failed to detect stale tabs' });
   }
 };
+
+exports.bulkCreateTabs = async (req, res) => {
+  try {
+    const { tabs } = req.body;
+    const userId = req.user.id;
+    const { bulkImportQueue } = require('../config/queue');
+
+    await bulkImportQueue.add({ items: tabs, userId, type: 'tab' });
+
+    res.status(202).json({ message: 'Tab import process started' });
+  } catch (error) {
+    logger.error('Error bulk creating tabs:', error);
+    res.status(500).json({ error: 'Failed to bulk create tabs' });
+  }
+};

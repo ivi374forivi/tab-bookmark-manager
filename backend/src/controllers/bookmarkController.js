@@ -142,3 +142,18 @@ exports.archiveBookmark = async (req, res) => {
     res.status(500).json({ error: 'Failed to archive bookmark' });
   }
 };
+
+exports.bulkCreateBookmarks = async (req, res) => {
+  try {
+    const { bookmarks } = req.body;
+    const userId = req.user.id;
+    const { bulkImportQueue } = require('../config/queue');
+
+    await bulkImportQueue.add({ items: bookmarks, userId, type: 'bookmark' });
+
+    res.status(202).json({ message: 'Bookmark import process started' });
+  } catch (error) {
+    logger.error('Error bulk creating bookmarks:', error);
+    res.status(500).json({ error: 'Failed to bulk create bookmarks' });
+  }
+};

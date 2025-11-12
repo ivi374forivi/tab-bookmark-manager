@@ -2,12 +2,13 @@ const Queue = require('bull');
 const logger = require('../utils/logger');
 const { redisClient } = require('./redis');
 
-let contentAnalysisQueue, archivalQueue, suggestionQueue;
+let contentAnalysisQueue, archivalQueue, suggestionQueue, bulkImportQueue;
 
 if (process.env.NODE_ENV === 'test') {
   contentAnalysisQueue = { add: jest.fn(), process: jest.fn(), on: jest.fn(), close: jest.fn() };
   archivalQueue = { add: jest.fn(), process: jest.fn(), on: jest.fn(), close: jest.fn() };
   suggestionQueue = { add: jest.fn(), process: jest.fn(), on: jest.fn(), close: jest.fn() };
+  bulkImportQueue = { add: jest.fn(), process: jest.fn(), on: jest.fn(), close: jest.fn() };
 } else {
   // Create queues for different processing tasks
   contentAnalysisQueue = new Queue('content-analysis', {
@@ -19,7 +20,46 @@ if (process.env.NODE_ENV === 'test') {
   suggestionQueue = new Queue('suggestion', {
     createClient: () => redisClient,
   });
+const bulkImportQueue = new Queue('bulk-import', {
+  createClient: () => redisClient,
+});
 }
+
+// Bulk import job processor
+bulkImportQueue.process(async (job) => {
+  const { items, userId, type } = job.data;
+  const db = require('../config/db');
+
+  const tableName = type === 'tab' ? 'tabs' : 'bookmarks';
+
+  for (const item of items) {
+    const { url, title, favicon, content, folder } = item;
+
+    let result;
+    if (type === 'tab') {
+      result = await db.query(
+        `INSERT INTO ${tableName} (url, title, favicon, content, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [url, title, favicon, content, userId]
+      );
+    } else {
+      result = await db.query(
+        `INSERT INTO ${tableName} (url, title, favicon, folder, content, user_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [url, title, favicon, folder, content, userId]
+      );
+    }
+
+    const newItem = result.rows[0];
+
+    if (content) {
+      await contentAnalysisQueue.add({
+        itemId: newItem.id,
+        itemType: type,
+        url,
+        content
+      });
+    }
+  }
+});
 
 
 // Content analysis job processor
@@ -79,5 +119,6 @@ suggestionQueue.process(async (job) => {
 module.exports = {
   contentAnalysisQueue,
   archivalQueue,
-  suggestionQueue
+  suggestionQueue,
+  bulkImportQueue
 };
