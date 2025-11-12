@@ -17,6 +17,11 @@ const { initializeDatabase } = require('./config/database');
 const { connectRedis } = require('./config/redis');
 const automationEngine = require('./services/automationEngine');
 const rateLimit = require('express-rate-limit');
+const { errorHandler, notFoundHandler, handleUncaughtException, handleUnhandledRejection } = require('./middleware/errorHandler');
+
+// Handle uncaught exceptions and unhandled rejections
+handleUncaughtException();
+handleUnhandledRejection();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -52,17 +57,26 @@ app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Error handling
-app.use((err, req, res, next) => {
-  logger.error(err.stack);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error'
+app.get('/health', async (req, res) => {
+  const mlServiceClient = require('./utils/mlServiceClient');
+  const mlStatus = mlServiceClient.getMLServiceStatus();
+  
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    services: {
+      api: 'healthy',
+      mlService: mlStatus.healthy ? 'healthy' : 'unhealthy',
+      mlServiceLastCheck: mlStatus.lastCheck,
+    }
   });
 });
+
+// 404 handler
+app.use(notFoundHandler);
+
+// Global error handler (must be last)
+app.use(errorHandler);
 
 // Initialize services
 async function startServer() {
@@ -74,6 +88,11 @@ async function startServer() {
     // Connect to Redis
     await connectRedis();
     logger.info('Redis connected');
+
+    // Start ML service health monitoring
+    const mlServiceClient = require('./utils/mlServiceClient');
+    mlServiceClient.startHealthChecks();
+    logger.info('ML Service health monitoring started');
 
     // Start automation engine
     automationEngine.start();

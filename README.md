@@ -101,7 +101,26 @@ python src/app.py
 
 ## 📚 API Documentation
 
+Interactive API documentation is available at `http://localhost:3000/api-docs` when the backend server is running. The documentation is automatically generated using OpenAPI/Swagger and includes:
+
+- Complete endpoint descriptions
+- Request/response schemas
+- Authentication requirements
+- Interactive testing interface
+
 ### Backend API Endpoints
+
+#### Authentication
+- `POST /api/auth/register` - Register a new user
+- `POST /api/auth/login` - Login and get JWT token
+- `POST /api/auth/logout` - Logout and revoke token
+
+#### User Profile Management
+- `GET /api/user/profile` - Get user profile
+- `PUT /api/user/profile` - Update username
+- `PUT /api/user/email` - Update email address
+- `PUT /api/user/password` - Change password
+- `DELETE /api/user/account` - Delete user account
 
 #### Tabs
 - `POST /api/tabs` - Create a new tab
