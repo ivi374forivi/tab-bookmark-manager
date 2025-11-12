@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpecs = require('./config/swagger');
 const logger = require('./utils/logger');
 const tabRoutes = require('./routes/tabs');
 const bookmarkRoutes = require('./routes/bookmarks');
@@ -10,6 +12,7 @@ const searchRoutes = require('./routes/search');
 const suggestionsRoutes = require('./routes/suggestions');
 const archiveRoutes = require('./routes/archive');
 const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/user');
 const { initializeDatabase } = require('./config/database');
 const { connectRedis } = require('./config/redis');
 const automationEngine = require('./services/automationEngine');
@@ -33,6 +36,12 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
+// API Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
+  customSiteTitle: 'Tab & Bookmark Manager API',
+  customCss: '.swagger-ui .topbar { display: none }',
+}));
+
 // Routes
 app.use('/api/tabs', tabRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
@@ -40,6 +49,7 @@ app.use('/api/search', searchRoutes);
 app.use('/api/suggestions', suggestionsRoutes);
 app.use('/api/archive', archiveRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/user', userRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
