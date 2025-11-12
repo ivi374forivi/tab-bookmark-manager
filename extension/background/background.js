@@ -127,6 +127,72 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (request.action === 'closeSavedTabs') {
+    closeSavedTabs().then(count => sendResponse({ success: true, count }));
+    return true;
+  }
+
+  if (request.action === 'findSavedBookmarks') {
+    findSavedBookmarks().then(bookmarks => sendResponse({ success: true, bookmarks, count: bookmarks.length }));
+    return true;
+  }
 });
+
+async function closeSavedTabs() {
+  try {
+    const response = await fetch(`${API_URL}/tabs`);
+    const savedTabs = await response.json();
+    const savedUrls = new Set(savedTabs.map(tab => tab.url));
+
+    const openTabs = await chrome.tabs.query({});
+    let closedCount = 0;
+
+    for (const tab of openTabs) {
+      if (savedUrls.has(tab.url)) {
+        await chrome.tabs.remove(tab.id);
+        closedCount++;
+      }
+    }
+
+    return closedCount;
+  } catch (error) {
+    console.error('Error closing saved tabs:', error);
+    return 0;
+  }
+}
+
+async function findSavedBookmarks() {
+  try {
+    const response = await fetch(`${API_URL}/bookmarks`);
+    const savedBookmarks = await response.json();
+    const savedUrls = new Set(savedBookmarks.map(bookmark => bookmark.url));
+
+    const browserBookmarks = await new Promise(resolve => {
+      chrome.bookmarks.getTree(bookmarkTree => {
+        const bookmarks = [];
+        function traverse(nodes) {
+          nodes.forEach(node => {
+            if (node.url) {
+              bookmarks.push(node);
+            }
+            if (node.children) {
+              traverse(node.children);
+            }
+          });
+        }
+        traverse(bookmarkTree);
+        resolve(bookmarks);
+      });
+    });
+
+    const savedBrowserBookmarks = browserBookmarks.filter(bookmark => savedUrls.has(bookmark.url));
+
+    return savedBrowserBookmarks;
+  } catch (error) {
+    console.error('Error finding saved bookmarks:', error);
+    return [];
+  }
+}
 
 console.log('Tab & Bookmark Manager extension loaded');

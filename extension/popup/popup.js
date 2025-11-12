@@ -4,6 +4,8 @@ const API_URL = 'http://localhost:3000/api';
 const captureTabBtn = document.getElementById('captureTab');
 const syncTabsBtn = document.getElementById('syncTabs');
 const syncBookmarksBtn = document.getElementById('syncBookmarks');
+const closeSavedTabsBtn = document.getElementById('closeSavedTabs');
+const findSavedBookmarksBtn = document.getElementById('findSavedBookmarks');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
 const getSuggestionsBtn = document.getElementById('getSuggestions');
@@ -15,6 +17,8 @@ const statusEl = document.getElementById('status');
 captureTabBtn.addEventListener('click', captureCurrentTab);
 syncTabsBtn.addEventListener('click', syncAllTabs);
 syncBookmarksBtn.addEventListener('click', syncAllBookmarks);
+closeSavedTabsBtn.addEventListener('click', closeSavedTabs);
+findSavedBookmarksBtn.addEventListener('click', findSavedBookmarks);
 searchBtn.addEventListener('click', performSearch);
 getSuggestionsBtn.addEventListener('click', fetchSuggestions);
 
@@ -40,6 +44,33 @@ async function captureCurrentTab() {
     }
   } catch (error) {
     showStatus('Failed to capture tab', 'error');
+    console.error(error);
+  }
+}
+
+async function closeSavedTabs() {
+  try {
+    showStatus('Closing saved tabs...', 'info');
+    const response = await chrome.runtime.sendMessage({ action: 'closeSavedTabs' });
+    if (response.success) {
+      showStatus(`Closed ${response.count} tabs successfully!`, 'success');
+    }
+  } catch (error) {
+    showStatus('Failed to close tabs', 'error');
+    console.error(error);
+  }
+}
+
+async function findSavedBookmarks() {
+  try {
+    showStatus('Finding saved bookmarks...', 'info');
+    const response = await chrome.runtime.sendMessage({ action: 'findSavedBookmarks' });
+    if (response.success) {
+      showStatus(`Found ${response.count} saved bookmarks.`, 'success');
+      displaySearchResults(response.bookmarks);
+    }
+  } catch (error) {
+    showStatus('Failed to find saved bookmarks', 'error');
     console.error(error);
   }
 }
