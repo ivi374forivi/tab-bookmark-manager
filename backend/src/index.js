@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpecs = require('./config/swagger');
 const logger = require('./utils/logger');
 const tabRoutes = require('./routes/tabs');
 const bookmarkRoutes = require('./routes/bookmarks');
@@ -10,10 +12,16 @@ const searchRoutes = require('./routes/search');
 const suggestionsRoutes = require('./routes/suggestions');
 const archiveRoutes = require('./routes/archive');
 const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/user');
 const { initializeDatabase } = require('./config/database');
 const { connectRedis } = require('./config/redis');
 const automationEngine = require('./services/automationEngine');
 const rateLimit = require('express-rate-limit');
+const { errorHandler, notFoundHandler, handleUncaughtException, handleUnhandledRejection } = require('./middleware/errorHandler');
+
+// Handle uncaught exceptions and unhandled rejections
+handleUncaughtException();
+handleUnhandledRejection();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -33,6 +41,12 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
+// API Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
+  customSiteTitle: 'Tab & Bookmark Manager API',
+  customCss: '.swagger-ui .topbar { display: none }',
+}));
+
 // Routes
 app.use('/api/tabs', tabRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
@@ -40,19 +54,29 @@ app.use('/api/search', searchRoutes);
 app.use('/api/suggestions', suggestionsRoutes);
 app.use('/api/archive', archiveRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/user', userRoutes);
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Error handling
-app.use((err, req, res, next) => {
-  logger.error(err.stack);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error'
+app.get('/health', async (req, res) => {
+  const mlServiceClient = require('./utils/mlServiceClient');
+  const mlStatus = mlServiceClient.getMLServiceStatus();
+  
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    services: {
+      api: 'healthy',
+      mlService: mlStatus.healthy ? 'healthy' : 'unhealthy',
+      mlServiceLastCheck: mlStatus.lastCheck,
+    }
   });
 });
+
+// 404 handler
+app.use(notFoundHandler);
+
+// Global error handler (must be last)
+app.use(errorHandler);
 
 // Initialize services
 async function startServer() {
@@ -64,6 +88,11 @@ async function startServer() {
     // Connect to Redis
     await connectRedis();
     logger.info('Redis connected');
+
+    // Start ML service health monitoring
+    const mlServiceClient = require('./utils/mlServiceClient');
+    mlServiceClient.startHealthChecks();
+    logger.info('ML Service health monitoring started');
 
     // Start automation engine
     automationEngine.start();

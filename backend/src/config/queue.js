@@ -64,57 +64,176 @@ bulkImportQueue.process(async (job) => {
 
 // Content analysis job processor
 contentAnalysisQueue.process(async (job) => {
-  logger.info(`Processing content analysis job ${job.id}`);
   const { itemId, itemType, url, content } = job.data;
   
+  logger.info('Processing content analysis job', { 
+    jobId: job.id, 
+    itemId, 
+    itemType 
+  });
+  
   try {
-    // Call ML service for analysis
-    const axios = require('axios');
-    const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:5000';
+    const mlServiceClient = require('../utils/mlServiceClient');
+    const db = require('../config/db');
     
-    const response = await axios.post(`${ML_SERVICE_URL}/api/analyze`, {
-      text: content,
-      url: url
+    // Analyze content using ML service with error handling
+    const analysis = await mlServiceClient.analyzeContent(content, url);
+    
+    if (!analysis) {
+      logger.warn('ML Service unavailable, skipping analysis', { 
+        itemId, 
+        itemType 
+      });
+      // Don't fail the job, just skip analysis
+      return { status: 'skipped', reason: 'ML service unavailable' };
+    }
+    
+    // Update database with analysis results
+    const tableName = itemType === 'tab' ? 'tabs' : 'bookmarks';
+    const updateFields = [];
+    const updateValues = [];
+    let paramIndex = 1;
+    
+    if (analysis.summary) {
+      updateFields.push(`summary = $${paramIndex++}`);
+      updateValues.push(analysis.summary);
+    }
+    
+    if (analysis.category) {
+      updateFields.push(`category = $${paramIndex++}`);
+      updateValues.push(analysis.category);
+    }
+    
+    if (analysis.entities) {
+      updateFields.push(`entities = $${paramIndex++}`);
+      updateValues.push(JSON.stringify(analysis.entities));
+    }
+    
+    if (analysis.keywords && Array.isArray(analysis.keywords)) {
+      updateFields.push(`tags = $${paramIndex++}`);
+      updateValues.push(analysis.keywords);
+    }
+    
+    if (analysis.embedding && Array.isArray(analysis.embedding)) {
+      updateFields.push(`embedding = $${paramIndex++}`);
+      updateValues.push(`[${analysis.embedding.join(',')}]`);
+    }
+    
+    if (updateFields.length > 0) {
+      updateValues.push(itemId);
+      await db.query(
+        `UPDATE ${tableName} SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`,
+        updateValues
+      );
+    }
+    
+    logger.info('Content analysis completed successfully', { 
+      itemId, 
+      itemType,
+      fieldsUpdated: updateFields.length 
     });
     
-    logger.info(`Content analysis completed for ${itemType} ${itemId}`);
-    return response.data;
+    return { status: 'completed', analysis };
   } catch (error) {
-    logger.error(`Content analysis failed for ${itemType} ${itemId}:`, error);
+    logger.error('Content analysis job failed', { 
+      jobId: job.id,
+      itemId, 
+      itemType,
+      error: error.message,
+      stack: error.stack 
+    });
     throw error;
   }
 });
 
 // Archival job processor
 archivalQueue.process(async (job) => {
-  logger.info(`Processing archival job ${job.id}`);
-  const { url } = job.data;
+  const { url, userId } = job.data;
+  
+  logger.info('Processing archival job', { 
+    jobId: job.id, 
+    url 
+  });
   
   try {
     const archiveService = require('../services/archiveService');
-    const result = await archiveService.archivePage(url);
-    logger.info(`Archival completed for ${url}`);
+    const result = await archiveService.archivePage(url, userId);
+    
+    logger.info('Archival completed successfully', { 
+      jobId: job.id,
+      url,
+      archiveId: result.id 
+    });
+    
     return result;
   } catch (error) {
-    logger.error(`Archival failed for ${url}:`, error);
+    logger.error('Archival job failed', { 
+      jobId: job.id,
+      url,
+      error: error.message,
+      stack: error.stack 
+    });
     throw error;
   }
 });
 
 // Suggestion generation job processor
 suggestionQueue.process(async (job) => {
-  logger.info(`Processing suggestion job ${job.id}`);
+  logger.info('Processing suggestion generation job', { 
+    jobId: job.id 
+  });
   
   try {
     const suggestionService = require('../services/suggestionService');
-    const result = await suggestionService.generateSuggestions();
-    logger.info('Suggestion generation completed');
+    const { userId } = job.data || {};
+    
+    const result = await suggestionService.generateSuggestions(userId);
+    
+    logger.info('Suggestion generation completed successfully', { 
+      jobId: job.id,
+      suggestionsGenerated: result?.count || 0 
+    });
+    
     return result;
   } catch (error) {
-    logger.error('Suggestion generation failed:', error);
+    logger.error('Suggestion generation job failed', { 
+      jobId: job.id,
+      error: error.message,
+      stack: error.stack 
+    });
     throw error;
   }
 });
+
+// Add error event listeners for queues
+if (process.env.NODE_ENV !== 'test') {
+  [contentAnalysisQueue, archivalQueue, suggestionQueue, bulkImportQueue].forEach(queue => {
+    queue.on('failed', (job, err) => {
+      logger.error('Queue job failed', {
+        queueName: queue.name,
+        jobId: job.id,
+        data: job.data,
+        error: err.message,
+        attemptsMade: job.attemptsMade,
+      });
+    });
+    
+    queue.on('stalled', (job) => {
+      logger.warn('Queue job stalled', {
+        queueName: queue.name,
+        jobId: job.id,
+        data: job.data,
+      });
+    });
+    
+    queue.on('error', (error) => {
+      logger.error('Queue error', {
+        queueName: queue.name,
+        error: error.message,
+      });
+    });
+  });
+}
 
 module.exports = {
   contentAnalysisQueue,
